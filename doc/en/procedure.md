@@ -117,11 +117,13 @@ There are two key APIs that a Mudu procedure can invoke:
 `query` for SELECT statements
 
 ```rust
-pub fn query<R: Record>(
+pub fn mudu_query<
+    R: Record
+>(
     xid: XID,
     sql: &dyn SQLStmt,
-    params: &[&dyn ToDatum]
-) -> RS<RecordSet<R>> { ... }
+    params: &dyn SQLParams,
+) -> RS<RecordSet<R>>
 ```
 
 `query` Performs R2O(relation to object) mapping automatically, returning a result set of objects implementing the
@@ -132,11 +134,12 @@ pub fn query<R: Record>(
 `command` for INSERT/UPDATE/DELETE
 
 ```rust
-pub fn command(
-    xid: XID,
+pub fn mudu_command(
+    xid: XID, 
     sql: &dyn SQLStmt,
-    params: &[&dyn ToDatum]
-) -> RS<usize> { ... } // Returns affected row count
+    param: &dyn SQLParams
+) -> RS<u64>
+// Returns affected row count
 ```
 
 ### Parameters for Both:
@@ -156,29 +159,35 @@ Parameter list.
 
 <!--
 quote_begin
-content="[KeyTrait](../lang.common/proc_key_traits.md#L1-L34)"
+content="[KeyTrait](../lang.common/proc_key_traits.md#L-L)"
 -->
-
 ## Key Traits
 
 ### SQLStmt
 
+<!--
+quote_begin
+content="[DatumDyn](../../mudu/src/database/sql_stmt.rs#L3-L8)"
+lang="rust"
+-->
 ```rust
-
-pub trait SQLStmt: std::fmt::Debug + std::fmt::Display {
+pub trait SQLStmt: fmt::Debug + fmt::Display + Sync + Send {
     fn to_sql_string(&self) -> String;
+
+    fn clone_boxed(&self) -> Box<dyn SQLStmt>;
 }
 ```
+<!--quote_end-->
 
 ### DatumDyn
 
 <!--
 quote_begin
-content="[DatumDyn](../../mudu/src/tuple/datum.rs#L22-L34)"
+content="[DatumDyn](../../mudu/src/tuple/datum.rs#L23-L36)"
 lang="rust"
 -->
 ```rust
-pub trait DatumDyn: fmt::Debug + Sync {
+pub trait DatumDyn: fmt::Debug + Send + Sync + Any {
     fn dat_type_id_self(&self) -> RS<DatTypeID>;
 
     fn to_typed(&self, param: &ParamObj) -> RS<DatTyped>;
@@ -196,79 +205,101 @@ pub trait DatumDyn: fmt::Debug + Sync {
 <!--quote_end-->
 
 ## A Example: A Wallet APP's Transfer Procedure
-
+<!--
+quote_begin
+content="[Example](../lang.common/transfer_funds.md#L-L)"
+-->
+<!--
+quote_begin
+content="[Transfer](../../example/wallet/src/rust/procedures.rs#L23-L105)"
+lang="rust"
+-->
 ```rust
-
-use mudu::{sql_param, sql_stmt, XID, RS, ER::MuduError};
-use mudu_macro::mudu_macro;
-use crate::rust::wallets::object::Wallets;
-use uuid::Uuid;
-
-#[mudu_macro]
-pub fn transfer_funds(
-    xid: XID, 
-    from_user_id: i32, 
-    to_user_id: i32, 
-    amount: i32
-) -> RS<()> {
-    // Validate amount
+#[mudu_proc]
+pub fn transfer_funds(xid: XID, from_user_id: i32, to_user_id: i32, amount: i32) -> RS<()> {
+    // Check amount > 0
     if amount <= 0 {
-        return Err(MuduError("Transfer amount must be > 0".into()));
+        return Err(m_error!(
+            MuduError,
+            "The transfer amount must be greater than 0"
+        ));
     }
+
+    // Cannot transfer money to oneself
     if from_user_id == to_user_id {
-        return Err(MuduError("Cannot transfer to self".into()));
+        return Err(m_error!(MuduError, "Cannot transfer money to oneself"));
     }
 
-    // Check sender balance
-    let mut wallet_rs = query::<Wallets>(
+    // Check whether the transfer-out account exists and has sufficient balance
+    let wallet_rs = mudu_query::<Wallets>(
         xid,
-        sql_stmt!("SELECT user_id, balance FROM wallets WHERE user_id = ?;"),
-        sql_param!(&[&from_user_id]),
+        sql_stmt!(&"SELECT user_id, balance FROM wallets WHERE user_id = ?;"),
+        sql_params!(&from_user_id),
     )?;
-    let from_wallet = wallet_rs.next()?
-        .ok_or_else(|| MuduError("Sender not found".into()))?;
-    
-    if from_wallet.balance() < amount {
-        return Err(MuduError("Insufficient funds".into()));
+
+    let from_wallet = if let Some(row) = wallet_rs.next_record()? {
+        row
+    } else {
+        return Err(m_error!(MuduError, "no such user"));
+    };
+
+    if from_wallet.get_balance().as_ref().unwrap().get_value() < amount {
+        return Err(m_error!(MuduError, "insufficient funds"));
     }
 
-    // Verify receiver exists
-    let mut to_wallet_rs = query::<Wallets>(
+    // Check the user account existing
+    let to_wallet = mudu_query::<Wallets>(
         xid,
-        sql_stmt!("SELECT user_id FROM wallets WHERE user_id = ?;"),
-        sql_param!(&[&to_user_id]),
+        sql_stmt!(&"SELECT user_id FROM wallets WHERE user_id = ?;"),
+        sql_params!(&(to_user_id)),
     )?;
-    if to_wallet_rs.next()?.is_none() {
-        return Err(MuduError("Receiver not found".into()));
+    let _to_wallet = if let Some(row) = to_wallet.next_record()? {
+        row
+    } else {
+        return Err(m_error!(MuduError, "no such user"));
+    };
+
+    // Perform a transfer operation
+    // 1. Deduct the balance of the account transferred out
+    let deduct_updated_rows = mudu_command(
+        xid,
+        sql_stmt!(&"UPDATE wallets SET balance = balance - ? WHERE user_id = ?;"),
+        sql_params!(&(amount, from_user_id)),
+    )?;
+    if deduct_updated_rows != 1 {
+        return Err(m_error!(MuduError, "transfer fund failed"));
+    }
+    // 2. Increase the balance of the transfer-in account
+    let increase_updated_rows = mudu_command(
+        xid,
+        sql_stmt!(&"UPDATE wallets SET balance = balance + ? WHERE user_id = ?;"),
+        sql_params!(&(amount, to_user_id)),
+    )?;
+    if increase_updated_rows != 1 {
+        return Err(m_error!(MuduError, "transfer fund failed"));
     }
 
-    // Execute transfer
-    command(
-        xid,
-        sql_stmt!("UPDATE wallets SET balance = balance - ? WHERE user_id = ?;"),
-        sql_param!(&[&amount, &from_user_id]),
-    )?;
-    
-    command(
-        xid,
-        sql_stmt!("UPDATE wallets SET balance = balance + ? WHERE user_id = ?;"),
-        sql_param!(&[&amount, &to_user_id]),
-    )?;
-
-    // Record transaction
-    let trans_id = Uuid::new_v4().to_string();
-    command(
+    // 3. Record the transaction
+    let id = Uuid::new_v4().to_string();
+    let insert_rows = mudu_command(
         xid,
         sql_stmt!(
-            "INSERT INTO transactions (trans_id, from_user, to_user, amount) 
-             VALUES (?, ?, ?, ?);"
+            &r#"
+        INSERT INTO transactions
+        (trans_id, from_user, to_user, amount)
+        VALUES (?, ?, ?, ?);
+        "#
         ),
-        sql_param!(&[&trans_id, &from_user_id, &to_user_id, &amount]),
+        sql_params!(&(id, from_user_id, to_user_id, amount)),
     )?;
-
+    if insert_rows != 1 {
+        return Err(m_error!(MuduError, "transfer fund failed"));
+    }
     Ok(())
 }
 ```
+<!--quote_end-->
+<!--quote_end-->
 
 ## Mudu Procedure and Transaction
 

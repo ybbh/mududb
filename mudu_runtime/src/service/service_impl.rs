@@ -1,8 +1,11 @@
+use std::path::PathBuf;
 use crate::service::app_inst::AppInst;
 use crate::service::runtime_simple::RuntimeSimple;
 use crate::service::service::Service;
 use mudu::common::result::RS;
 use std::sync::Arc;
+use mudu::error::ec::EC;
+use mudu::m_error;
 
 struct ServiceImpl {
     runtime: Arc<RuntimeSimple>,
@@ -10,6 +13,18 @@ struct ServiceImpl {
 
 impl ServiceImpl {
     pub fn new(package_path: &String, db_path: &String) -> RS<Self> {
+        for ps in [package_path, db_path] {
+            let path = PathBuf::from(ps);
+            if !path.exists() {
+                std::fs::create_dir_all(&path).map_err(|e| {
+                    m_error!(EC::IOErr, format!("error creating database directory: {}", ps), e)
+                })?
+            } else {
+                if !path.is_dir() {
+                  return Err(m_error!(EC::IOErr, format!("{} is not a directory", ps)))
+                }
+            }
+        }
         let mut runtime = RuntimeSimple::new(package_path, db_path);
         runtime.initialized()?;
         let ret = Self {

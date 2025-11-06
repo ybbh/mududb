@@ -21,6 +21,50 @@ pub fn invoke_proc(
     }
 }
 
+pub fn invoke_proc_wrapper(
+    p1_ptr: *const u8,
+    p1_len: usize,
+    p2_ptr: *mut u8,
+    p2_len: usize,
+    proc: fn(ProcParam) -> RS<ProcResult>,
+) -> i32 {
+    let r = _invoke_proc_wrapper(p1_ptr, p1_len, p2_ptr, p2_len, proc);
+    match r {
+        Ok(()) => 0,
+        Err((code, _e)) => code,
+    }
+}
+
+pub fn _invoke_proc_wrapper(
+    p1_ptr: *const u8,
+    p1_len: usize,
+    p2_ptr: *mut u8,
+    p2_len: usize,
+    f: fn(ProcParam) -> RS<ProcResult>,
+) -> Result<(), (i32, MError)> {
+    let param: ProcParam = unsafe {
+        let slice = slice::from_raw_parts(p1_ptr, p1_len);
+        let (param, _size) = deserialize_sized_from::<ProcParam>(slice).map_err(|e| {
+            error!(
+                "deserialized input parameter error {}, length {}",
+                e, p1_len
+            );
+            (-1001, e)
+        })?;
+        param
+    };
+    info!("invoke function, param {:?}", &param);
+    let result = f(param);
+    info!("invoke function, return {:?}", &result);
+    let out_buf = unsafe {
+        let slice = slice::from_raw_parts_mut(p2_ptr, p2_len);
+        slice
+    };
+    let proc_result = result.map_err(|e| (-1001, e))?;
+    serialize_sized_to(&proc_result, out_buf).map_err(|e| (-2002, e))?;
+    Ok(())
+}
+
 fn _invoke_proc(
     p1_ptr: *const u8,
     p1_len: usize,
@@ -43,7 +87,7 @@ fn _invoke_proc(
         let slice = slice::from_raw_parts_mut(p2_ptr, p2_len);
         slice
     };
-    let proc_result = ProcResult::new(result);
+    let proc_result = ProcResult::new(result).map_err(|e| (-3003, e))?;
     serialize_sized_to(&proc_result, out_buf).map_err(|e| (-2002, e))?;
     Ok(())
 }

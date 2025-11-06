@@ -53,6 +53,41 @@ fn names_to_desc(names: Vec<String>) -> TupleFieldDesc {
     TupleFieldDesc::new(desc)
 }
 
+
+impl<T> EnumerableDatum for T
+where
+    T: DatumDyn + Clone + 'static,
+{
+    fn to_binary(&self, desc: &[DatumDesc]) -> RS<Vec<Vec<u8>>> {
+        if desc.len() != 1 {
+            panic!("single type expects exactly one DatumDesc");
+        }
+        let binary = datum_to_binary(self, &desc[0])?;
+        Ok(vec![binary])
+    }
+
+    fn tuple_desc(&self) -> RS<TupleFieldDesc> {
+        Ok(Self::tuple_desc_static())
+    }
+}
+
+impl<T> RsTupleDatum for T
+where
+    T: DatumDyn + Clone + 'static,
+{
+    fn from_binary(vec_bin: &Vec<Vec<u8>>, desc: &[DatumDesc]) -> RS<T> {
+        if vec_bin.len() != 1 || desc.len() != 1 {
+            panic!("single type expects exactly one binary and one DatumDesc");
+        }
+        datum_from_binary::<T>(&vec_bin[0], &desc[0])
+    }
+
+    fn tuple_desc_static() -> TupleFieldDesc {
+        let name = type_name::<T>().split("::").last().unwrap_or("").to_string();
+        names_to_desc(vec![name])
+    }
+}
+
 macro_rules! impl_rs_tuple_datum {
     // basic: empty tuple
     () => {
@@ -185,3 +220,16 @@ impl_rs_tuple_datum!(
     A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, A1, B1, C1, D1,
     E1, F1
 );
+
+
+#[cfg(test)]
+mod tests {
+    use crate::tuple::rs_tuple_datum;
+
+    #[test]
+    fn test_tuple_datum() {
+        println!("{:?}", <i32 as rs_tuple_datum::RsTupleDatum>::tuple_desc_static());
+        println!("{:?}", <(i32,) as rs_tuple_datum::RsTupleDatum>::tuple_desc_static());
+        println!("{:?}", <(i32, i64) as rs_tuple_datum::RsTupleDatum>::tuple_desc_static());
+    }
+}

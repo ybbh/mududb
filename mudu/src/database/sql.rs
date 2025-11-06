@@ -214,7 +214,11 @@ pub fn context(conn: Arc<dyn DBConn>) -> RS<Context> {
     Context::create(conn)
 }
 
-pub fn mudu_query<R: Record>(xid: XID, sql: &dyn SQLStmt, param: &dyn SQLParams) -> RS<RecordSet<R>> {
+pub fn mudu_query<R: Record>(
+    xid: XID,
+    sql: &dyn SQLStmt,
+    param: &dyn SQLParams,
+) -> RS<RecordSet<R>> {
     let r = Context::context(xid);
     let context = rs_option(r, &format!("no such transaction {}", xid))?;
     context.query(sql, param)

@@ -1,7 +1,7 @@
 use crate::error::ec::EC;
 use serde::de::{MapAccess, SeqAccess, Visitor};
 use serde::ser::SerializeStruct;
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::error::Error;
 use std::fmt;
 use std::panic::Location;
@@ -13,7 +13,7 @@ pub struct MError {
     ec: EC,
     msg: String,
     src: Option<Arc<dyn Error>>,
-    loc: String
+    loc: String,
 }
 
 unsafe impl Send for MError {}
@@ -22,13 +22,21 @@ unsafe impl Sync for MError {}
 impl MError {
     #[track_caller]
     pub fn new_with_ec(ec: EC) -> Self {
-        let loc = format!("{}:{}", Location::caller().file(), Location::caller().line());
+        let loc = format!(
+            "{}:{}",
+            Location::caller().file(),
+            Location::caller().line()
+        );
         Self::new(ec, ec.message(), None, loc)
     }
 
     #[track_caller]
     pub fn new_with_ec_msg<S: AsRef<str>>(ec: EC, msg: S) -> Self {
-        let loc = format!("{}:{}", Location::caller().file(), Location::caller().line());
+        let loc = format!(
+            "{}:{}",
+            Location::caller().file(),
+            Location::caller().line()
+        );
         Self::new(ec, msg.as_ref(), None, loc)
     }
 
@@ -38,7 +46,11 @@ impl MError {
         msg: S,
         src: E,
     ) -> Self {
-        let loc = format!("{}:{}", Location::caller().file(), Location::caller().line());
+        let loc = format!(
+            "{}:{}",
+            Location::caller().file(),
+            Location::caller().line()
+        );
         Self::new(ec, msg.as_ref(), Some(Arc::from(src.into())), loc)
     }
 

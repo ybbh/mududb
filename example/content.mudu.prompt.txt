@@ -1,1 +1,0 @@
-Implement a payment Mudu application that supports transfer, recharge, payment, and inquiry functions.

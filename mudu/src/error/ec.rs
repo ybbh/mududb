@@ -53,6 +53,9 @@ impl Display for EC {
 }
 
 impl EC {
+    pub fn to_u32(&self) -> u32 {
+        (*self).into()
+    }
     pub fn from_u32(ec: u32) -> Option<EC> {
         if (ec != 0 && ec <= ERROR_CODE_START_AT) || ec >= ERROR_CODE_END_AT {
             panic!("unknown error code {}", ec)

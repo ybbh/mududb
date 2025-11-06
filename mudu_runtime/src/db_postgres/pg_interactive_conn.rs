@@ -2,7 +2,6 @@ use crate::db_postgres::result_set_pg::ResultSetPG;
 use crate::db_postgres::tx_pg::TxPg;
 use crate::resolver::schema_mgr::SchemaMgr;
 use crate::resolver::sql_resolver::SQLResolver;
-use crate::sql_prepare::parse_one::parse_one_query;
 use mudu::common::result::RS;
 use mudu::common::xid::XID;
 use mudu::database::db_conn::DBConn;
@@ -178,8 +177,8 @@ impl PGInteractive {
         Ok(sql_after_replaced)
     }
 
-    fn parse_one_query(&self, sql: &String) -> RS<StmtSelect> {
-        parse_one_query(&self.parser, sql)
+    fn parse_one_query(&self, _sql: &String) -> RS<StmtSelect> {
+        todo!()
     }
 
     fn parse_one_command(&self, sql: &String) -> RS<StmtCommand> {

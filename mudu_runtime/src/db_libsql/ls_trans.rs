@@ -6,6 +6,7 @@ use mudu::database::result_set::ResultSet;
 use mudu::error::ec::EC;
 use mudu::m_error;
 
+use crate::async_utils::blocking;
 use libsql::params::IntoParams;
 use mudu::data_type::dt_impl::dat_type_id::DatTypeID;
 use mudu::data_type::dt_impl::dat_typed::DatTyped;
@@ -14,7 +15,6 @@ use mudu::tuple::tuple_field::TupleField;
 use mudu::tuple::tuple_field_desc::TupleFieldDesc;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::async_utils::blocking;
 
 pub struct LSTrans {
     xid: XID,
