@@ -5,11 +5,20 @@ mod tests {
     use mudu::common::xid::XID;
     use mudu::procedure::proc_param::ProcParam;
     use mudu::procedure::proc_result::ProcResult;
+    use mudu::tuple::rs_tuple_datum::RsTupleDatum;
     use mudu_macro::mudu_proc;
 
     #[mudu_proc]
     pub fn example(xid: XID, a: i32, b: i64, c: String) -> RS<(i64, String)> {
         Ok((a as i64 + b + 1, format!("c={}, {} function invoked", c, xid)))
+    }
+
+
+    #[test]
+    fn test_mudu_macro2() {
+        let param = ProcParam::from_tuple(1, (1i32, 3i64, "string".to_string()), &<(i32, i64, String)>::tuple_desc_static()).unwrap();
+        let result = mudu_inner_example(param);
+        println!("result {:?}", result)
     }
 
     #[test]

@@ -143,8 +143,7 @@ impl RuntimeSimple {
             return Ok(());
         }
         let output = PathBuf::from(&self.package_path).join(format!("{}.mpk", mpk_name));
-        fs::copy(&path, &output)
-            .map_err(|e| m_error!(EC::IOErr, "package copy error", e))?;
+        fs::copy(&path, &output).map_err(|e| m_error!(EC::IOErr, "package copy error", e))?;
         Ok(())
     }
 
@@ -313,11 +312,9 @@ mod tests {
         let desc = <(i32, i64, String)>::tuple_desc_static();
         let params = ProcParam::from_tuple(0, tuple, &desc)?;
         let app_name = "app1".to_string();
-        let app = service.app(&app_name)
-            .ok_or_else(|| m_error!(
-            EC::NoneErr,
-            format!("no such app named {}", app_name)
-        ))?;
+        let app = service
+            .app(&app_name)
+            .ok_or_else(|| m_error!(EC::NoneErr, format!("no such app named {}", app_name)))?;
         let id = app.task_create()?;
         let proc_result = app.invoke(id, &"mod_0".to_string(), &"proc".to_string(), params)?;
         let result = proc_result.to::<(i32, String)>(&<(i32, String)>::tuple_desc_static())?;

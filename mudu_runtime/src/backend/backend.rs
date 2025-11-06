@@ -2,7 +2,10 @@ use crate::backend::mududb_cfg::MuduDBCfg;
 use crate::service::app_inst::AppInst;
 use crate::service::service::Service;
 use crate::service::service_impl::create_runtime_service;
+use actix_web::http::StatusCode;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use base64::Engine;
+use mudu::common::id::gen_oid;
 use mudu::common::result::RS;
 use mudu::error::ec::EC;
 use mudu::m_error;
@@ -14,22 +17,20 @@ use mudu_utils::notifier::Notifier;
 use mudu_utils::task::spawn_local_task;
 use mudu_utils::task_id::TaskID;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::collections::HashMap;
+use std::env::temp_dir;
 use std::sync::Arc;
 use std::{fs, thread};
-use std::env::temp_dir;
-use actix_web::http::StatusCode;
-use base64::Engine;
 use tokio::task::LocalSet;
 use tracing::{debug, error, info};
-use mudu::common::id::gen_oid;
 
 pub struct Backend {}
 
 #[derive(Serialize, Deserialize)]
 struct ProcedureList {
-    app_name:String,
-    procedures:Vec<String>,
+    app_name: String,
+    procedures: Vec<String>,
 }
 
 impl Backend {
@@ -90,18 +91,17 @@ impl Backend {
                             actix_web::error::InternalError::new(
                                 err,
                                 StatusCode::INTERNAL_SERVER_ERROR,
-                            ).into()
-                        })
+                            )
+                            .into()
+                        }),
                 )
                 // Configure general payload limits (required alongside JsonConfig)
                 .app_data(
-                    web::PayloadConfig::default()
-                        .limit(payload_limit) // overall payload limit
+                    web::PayloadConfig::default().limit(payload_limit), // overall payload limit
                 )
                 // Configure form payload limits
                 .app_data(
-                    web::FormConfig::default()
-                        .limit(payload_limit) // for form data
+                    web::FormConfig::default().limit(payload_limit), // for form data
                 )
                 .wrap(actix_web::middleware::Logger::default())
                 .service(app_list)
@@ -118,7 +118,7 @@ impl Backend {
     }
 }
 
-fn to_param(argv: &HashMap<String, String>, desc: &[DatumDesc]) -> RS<ProcParam> {
+fn to_param(argv: &Map<String, Value>, desc: &[DatumDesc]) -> RS<ProcParam> {
     let mut vec = vec![];
     for (_n, datum_desc) in desc.iter().enumerate() {
         let opt_name = argv.get(datum_desc.name());
@@ -132,10 +132,10 @@ fn to_param(argv: &HashMap<String, String>, desc: &[DatumDesc]) -> RS<ProcParam>
             }
         };
         let id = datum_desc.dat_type_id();
-        let internal = id.fn_input()(&DatPrintable::from(value), datum_desc.param_obj())
-            .map_err(|e| m_error!(EC::TypeBaseErr, "", e))?;
+        let internal = id.fn_input()(&DatPrintable::from(value.to_string()), datum_desc.param_obj())
+            .map_err(|e| m_error!(EC::TypeBaseErr, "convert printable to internal error", e))?;
         let dat = id.fn_send()(&internal, datum_desc.param_obj())
-            .map_err(|e| m_error!(EC::TypeBaseErr, "", e))?;
+            .map_err(|e| m_error!(EC::TypeBaseErr, "convert internal to binary error", e))?;
         vec.push(dat.into())
     }
     Ok(ProcParam::new(0, vec))
@@ -156,9 +156,9 @@ async fn async_invoke_proc(
     app_name: String,
     mod_name: String,
     proc_name: String,
-    argv: HashMap<String, String>,
+    argv: Map<String, Value>,
     service: Arc<dyn Service>,
-) -> RS<RS<Vec<String>>> {
+) -> RS<RS<Value>> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     // create a thread
     // to avoid to start a runtime from within a runtime
@@ -186,20 +186,19 @@ fn sync_invoke_proc(
     app_name: String,
     mod_name: String,
     proc_name: String,
-    argv: HashMap<String, String>,
+    argv: Map<String, Value>,
     service: Arc<dyn Service>,
-) -> RS<RS<Vec<String>>> {
+) -> RS<RS<Value>> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|e| m_error!(EC::IOErr, "runtime build error", e))?;
     let ret = runtime.block_on(async move {
-        let opt_app = service
-            .app(&app_name);
+        let opt_app = service.app(&app_name);
         let app = if let Some(app) = opt_app {
             app
         } else {
-            return Err(m_error!(EC::NoneErr, format!("no such app {}", &app_name)))
+            return Err(m_error!(EC::NoneErr, format!("no such app {}", &app_name)));
         };
         let task_id = app.task_create()?;
         let _app = app.clone();
@@ -228,9 +227,9 @@ fn invoke_proc_inner(
     proc_name: String,
     param: ProcParam,
     desc: Arc<ProcDesc>,
-) -> RS<Vec<String>> {
+) -> RS<Value> {
     let result = service.invoke(task_id, &mod_name, &proc_name, param)?;
-    let ret = result.to_string(desc.return_desc())?;
+    let ret = result.to_json(desc.return_desc())?;
     ret
 }
 
@@ -267,7 +266,7 @@ async fn app_proc_list(path: web::Path<String>, context: web::Data<AppContext>) 
                 "message": "ok",
                 "data": procedure_list,
             }))
-        },
+        }
         Err(e) => HttpResponse::Ok().json(serde_json::json!({
             "status": 1001,
             "message": format!("fail to get procedure list of app {}", app_name),
@@ -348,12 +347,13 @@ async fn invoke(
         proc_name,
         body_str,
         context.service.clone(),
-    ).await;
+    )
+    .await;
     match result {
-        Ok(vec) => HttpResponse::Ok().json(serde_json::json!({
+        Ok(value) => HttpResponse::Ok().json(serde_json::json!({
             "status": 0,
             "message": "ok",
-            "data": vec,
+            "data": value,
         })),
         Err(e) => HttpResponse::Ok().json(serde_json::json!({
             "status": 1001,
@@ -362,8 +362,6 @@ async fn invoke(
         })),
     }
 }
-
-
 
 fn handle_app_list(service: &dyn Service) -> RS<Vec<String>> {
     let list = service.list();
@@ -408,41 +406,38 @@ fn handle_procedure_detail(
 
 fn handle_install(body_str: String, service: &dyn Service) -> RS<()> {
     let map = serde_json::from_str::<HashMap<String, String>>(&body_str)
-        .map_err(|e| { m_error!(EC::DecodeErr, "deserialize body error: {}", e) })?;
+        .map_err(|e| m_error!(EC::DecodeErr, "deserialize body error: {}", e))?;
     let mpk_base64 = map
         .get("mpk_base64")
         .ok_or_else(|| m_error!(EC::NoneErr, "mpk_base64 missing for install request"))?;
-    let binary = base64::engine::general_purpose::STANDARD.decode(mpk_base64)
-        .map_err(|e| { m_error!(EC::DecodeErr, "decode error", e) })?;
+    let binary = base64::engine::general_purpose::STANDARD
+        .decode(mpk_base64)
+        .map_err(|e| m_error!(EC::DecodeErr, "decode error", e))?;
     let temp_mpk_file = temp_dir().join(format!("{:x}.mpk", gen_oid()));
-    fs::write(&temp_mpk_file, &binary)
-        .map_err(|e| { m_error!(EC::NoneErr, "write error", e) })?;
-    let file_path = temp_mpk_file.as_path().to_str()
-        .ok_or_else(|| {m_error!(EC::NoneErr, "cannot get string of PathBuf")})?.to_string();
+    fs::write(&temp_mpk_file, &binary).map_err(|e| m_error!(EC::NoneErr, "write error", e))?;
+    let file_path = temp_mpk_file
+        .as_path()
+        .to_str()
+        .ok_or_else(|| m_error!(EC::NoneErr, "cannot get string of PathBuf"))?
+        .to_string();
     service.install(&file_path)
 }
 
 async fn handle_invoke_proc(
-    conn_string:String,
-    app_name:String,
-    mod_name:String,
-    proc_name:String,
-    body:String,
+    conn_string: String,
+    app_name: String,
+    mod_name: String,
+    proc_name: String,
+    body: String,
     context: Arc<dyn Service>,
-) -> RS<Vec<String>> {
-    let map = serde_json::from_str::<HashMap<String, String>>(&body)
+) -> RS<Value> {
+    let object:Value = serde_json::from_str(&body)
         .map_err(|e| m_error!(EC::DecodeErr, "deserialize error", e))?;
+    let map = object.as_object()
+        .ok_or_else(|| m_error!(EC::DecodeErr, "request json body must be an object"))?;
     let name = format!("{}/{}/{}", app_name, mod_name, proc_name);
     debug!("invoke procedure: {} <{:?}>", name, map);
-    async_invoke_proc(
-        conn_string,
-        app_name,
-        mod_name,
-        proc_name,
-        map,
-        context,
-    )
-    .await?
+    async_invoke_proc(conn_string, app_name, mod_name, proc_name, map.clone(), context).await?
 }
 #[cfg(test)]
 mod test {

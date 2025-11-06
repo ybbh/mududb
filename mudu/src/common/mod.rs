@@ -16,10 +16,10 @@ pub mod result;
 pub mod result_of;
 pub mod slice;
 
+pub mod app_cfg;
 pub mod default_value;
 pub mod limitation;
 pub mod serde_utils;
 pub mod this_file;
 pub mod update_delta;
 pub mod xid;
-pub mod app_cfg;

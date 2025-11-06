@@ -1,10 +1,12 @@
 use crate::common::result::RS;
+use crate::data_type::dt_impl::dat_type_id::DatTypeID;
 use crate::error::ec::EC;
 use crate::m_error;
 use crate::tuple::datum_desc::DatumDesc;
 use crate::tuple::tuple_field_desc::TupleFieldDesc;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use serde_json::Map;
+use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
@@ -79,7 +81,7 @@ impl ProcDesc {
     /// Generate arbitrary parameter values as JSON map
     pub fn default_param_json(&self) -> RS<String> {
         let map = self.generate_default_map(&self.param_desc)?;
-        let s = serde_json::to_string_pretty(&map)
+        let s = serde_json::to_string_pretty(&Value::Object(map))
             .map_err(|e| m_error!(EC::IOErr, "serialize to json error", e))?;
         Ok(s)
     }
@@ -93,7 +95,7 @@ impl ProcDesc {
     }
 
     /// Generate default value for a specific DatumDesc
-    fn generate_default_value(&self, desc: &DatumDesc) -> RS<(String, String)> {
+    fn generate_default_value(&self, desc: &DatumDesc) -> RS<(String, Value)> {
         // Get the datatype ID and corresponding FnArbitrary functions
         let param = desc.param_obj();
 
@@ -102,12 +104,19 @@ impl ProcDesc {
             .map_err(|e| m_error!(EC::TypeBaseErr, "error when generating default value", e))?;
         let dat_printable = tp_id.fn_output()(&dat_internal, param)
             .map_err(|e| m_error!(EC::TypeBaseErr, "error when converting to printable", e))?;
-        Ok((desc.name().to_string(), dat_printable.into()))
+        let s = dat_printable.into();
+        let value = if tp_id == DatTypeID::CharFixedLen || tp_id == DatTypeID::CharVarLen {
+            Value::String(s)
+        } else {
+            s.parse()
+                .map_err(|e| m_error!(EC::DecodeErr, "error when generating default value", e))?
+        };
+        Ok((desc.name().to_string(), value))
     }
 
     /// Generate default map based on TupleFieldDesc
-    fn generate_default_map(&self, desc: &TupleFieldDesc) -> RS<HashMap<String, String>> {
-        let mut map = HashMap::new();
+    fn generate_default_map(&self, desc: &TupleFieldDesc) -> RS<Map<String, Value>> {
+        let mut map = Map::new();
         for field in desc.fields() {
             let kv = self.generate_default_value(field)?;
             map.insert(kv.0, kv.1);

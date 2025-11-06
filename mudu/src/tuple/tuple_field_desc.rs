@@ -21,6 +21,10 @@ impl TupleFieldDesc {
         &self.fields
     }
 
+    pub fn into_fields(self) -> Vec<DatumDesc> {
+        self.fields
+    }
+
     /// Converts to a binary tuple description with index mapping
     /// Returns a tuple of (binary_descriptor, original_to_normalized_index_mapping)
     pub fn to_tuple_binary_desc(&self) -> (TupleBinaryDesc, Vec<usize>) {

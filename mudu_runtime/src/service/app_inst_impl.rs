@@ -17,7 +17,7 @@ use mudu::procedure::proc_desc::ProcDesc;
 use mudu::procedure::proc_param::ProcParam;
 use mudu::procedure::proc_result::ProcResult;
 use mudu::utils::app_proc_desc::AppProcDesc;
-use mudu_utils::task_id::{new_task_id, TaskID};
+use mudu_utils::task_id::{TaskID, new_task_id};
 use scc::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
@@ -90,10 +90,9 @@ impl AppInstImplInner {
         let schema_mgr = SchemaMgr::from_sql_text(&ddl_sql)?;
         let app_proc_desc: AppProcDesc = package.app_proc_desc;
         for (mod_name, vec_desc) in app_proc_desc.modules {
-            let byte_code = package.modules.remove(&mod_name).ok_or_else(|| m_error!(
-                EC::NoneErr,
-                format!("no such module named {}", mod_name)
-            ))?;
+            let byte_code = package.modules.remove(&mod_name).ok_or_else(|| {
+                m_error!(EC::NoneErr, format!("no such module named {}", mod_name))
+            })?;
             let module =
                 Self::build_app_module(engine, linker, mod_name.clone(), byte_code, vec_desc)?;
             let _ = modules.insert_sync(mod_name, module);
@@ -153,31 +152,34 @@ impl AppInstImplInner {
         Ok(vec)
     }
     pub fn describe_procedure(&self, mod_name: &String, proc_name: &String) -> RS<Arc<ProcDesc>> {
-        let procedure = self.procedure(mod_name, proc_name).ok_or_else(|| m_error!(
-            EC::NoneErr,
-            format!("no such module named {} {}", mod_name, proc_name)
-        ))?;
+        let procedure = self.procedure(mod_name, proc_name).ok_or_else(|| {
+            m_error!(
+                EC::NoneErr,
+                format!("no such module named {} {}", mod_name, proc_name)
+            )
+        })?;
         Ok(procedure.desc())
     }
 
     pub fn invoke_procedure(
         &self,
-        task_id:TaskID,
+        task_id: TaskID,
         mod_name: &String,
         proc_name: &String,
         param: ProcParam,
     ) -> RS<ProcResult> {
-        let procedure = self.procedure(mod_name, proc_name)
-            .ok_or_else(|| {
-                    m_error!(EC::NoneErr,format!("procedure {}/{} not found", mod_name, proc_name))
-            })?;
+        let procedure = self.procedure(mod_name, proc_name).ok_or_else(|| {
+            m_error!(
+                EC::NoneErr,
+                format!("procedure {}/{} not found", mod_name, proc_name)
+            )
+        })?;
 
         let existing_xid = param.xid();
         let param = if is_xid_invalid(&existing_xid) {
-            let conn = self.connection(task_id).ok_or_else(||m_error!(
-                EC::NoneErr,
-                format!("no such task named {}", task_id)
-            ))?;
+            let conn = self
+                .connection(task_id)
+                .ok_or_else(|| m_error!(EC::NoneErr, format!("no such task named {}", task_id)))?;
             let context = Context::create(conn)?;
             let mut param = param;
             param.set_xid(context.xid());
@@ -278,8 +280,15 @@ impl AppInst for AppInstImpl {
         self.inner.list_procedure()
     }
 
-    fn invoke(&self, task_id:TaskID, mod_name: &String, proc_name: &String, param: ProcParam) -> RS<ProcResult> {
-        self.inner.invoke_procedure(task_id, mod_name, proc_name, param)
+    fn invoke(
+        &self,
+        task_id: TaskID,
+        mod_name: &String,
+        proc_name: &String,
+        param: ProcParam,
+    ) -> RS<ProcResult> {
+        self.inner
+            .invoke_procedure(task_id, mod_name, proc_name, param)
     }
 
     fn describe(&self, mod_name: &String, proc_name: &String) -> RS<Arc<ProcDesc>> {

@@ -4,7 +4,7 @@ mod tests {
     use crate::src_gen::src_gen::{Language, SrcGen};
     use mudu::common::result::RS;
     use mudu::error::ec::EC;
-    use mudu::m_error;
+    use mudu::{m_error, this_file};
     use std::fs;
     use std::path::PathBuf;
     use std::process::Command;
@@ -53,12 +53,8 @@ mod tests {
             }
         }
 
-        let path = project_root::get_project_root()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf();
-        let path = path.join("example");
+        let path = get_project_workspace();
+        let path = path.join("example/wallet");
         std::env::set_current_dir(&path).unwrap();
 
         let output = Command::new("cargo")
@@ -79,18 +75,23 @@ mod tests {
         Ok(())
     }
 
-    fn write_string_to_temp_file(content: String, file_name: String) -> RS<PathBuf> {
-        let path = project_root::get_project_root()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf();
-        let path = path.join("example").join("src").join("rust");
+    fn get_project_workspace() -> PathBuf {
+        let this_file = this_file!();
+        let _path = PathBuf::from(&this_file);
+        let project_path = _path
+            .parent().unwrap()
+            .parent().unwrap()
+            .parent().unwrap()
+            .parent().unwrap();
+        project_path.to_path_buf()
+    }
 
-        let file_path = path.join(file_name);
-        println!("write to temp file: {:?}", file_path);
+    fn write_string_to_temp_file(content: String, file_name: String) -> RS<PathBuf> {
+        let project_path = get_project_workspace();
+        let file_path = project_path.join("example")
+            .join("wallet").join("src").join("rust").join(file_name);
         fs::write(&file_path, content)
-            .map_err(|e| m_error!(EC::IOErr, "write temp file error", e))?;
+            .map_err(|e| m_error!(EC::IOErr, format!("write file {:?} error", file_path), e))?;
         Ok(file_path)
     }
 }

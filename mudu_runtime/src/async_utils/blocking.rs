@@ -1,7 +1,7 @@
-use std::thread;
 use mudu::common::result::RS;
 use mudu::error::ec::EC;
 use mudu::m_error;
+use std::thread;
 
 pub fn run_async<F, T>(future: F) -> RS<F::Output>
 where

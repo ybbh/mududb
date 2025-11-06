@@ -1,9 +1,9 @@
+use crate::async_utils::blocking;
+use crate::db_libsql::ls_desc;
 use crate::db_libsql::ls_trans::LSTrans;
-use crate::resolver::schema_mgr::SchemaMgr;
-use crate::sql_prepare::sql_prepare::SQLPrepare;
 use as_slice::AsSlice;
 use lazy_static::lazy_static;
-use libsql::{params, Builder, Connection, Database, Error};
+use libsql::{Builder, Connection, Database, Error, params};
 use mudu::common::result::RS;
 use mudu::common::xid::XID;
 use mudu::database::result_set::ResultSet;
@@ -11,14 +11,14 @@ use mudu::database::sql_params::SQLParams;
 use mudu::database::sql_stmt::{AsSQLStmtRef, SQLStmt};
 use mudu::error::ec::EC;
 use mudu::m_error;
-use mudu::tuple::datum::AsDatumDynRef;
+use mudu::tuple::datum::{AsDatumDynRef, DatumDyn};
+use mudu::tuple::datum_desc::DatumDesc;
 use mudu::tuple::tuple_field_desc::TupleFieldDesc;
 use scc::HashMap;
 use std::io::{BufRead, BufReader, Cursor};
+use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::mem;
-use crate::async_utils::blocking;
 
 #[derive(Clone)]
 pub struct LSSyncConn {
@@ -27,7 +27,6 @@ pub struct LSSyncConn {
 
 struct LSAsyncConnInner {
     conn: Connection,
-    prepare: SQLPrepare,
     trans: LockedTrans,
 }
 
@@ -93,20 +92,11 @@ async fn get_db(path: String, app_name: String) -> RS<Arc<Database>> {
 }
 
 impl LSSyncConn {
-    pub fn new(db_path: &String, app_name: &String, ddl_path: &String) -> RS<Self> {
-        let sql_prepare = if !ddl_path.is_empty() {
-            SQLPrepare::new(&ddl_path)?
-        } else if !app_name.is_empty() {
-            let schema_mgr = SchemaMgr::get_mgr(app_name)
-                .ok_or_else(|| m_error!(EC::NoneErr, "get schema mgr error"))?;
-            SQLPrepare::new_from_schema_mgr(schema_mgr)?
-        } else {
-            return Err(m_error!(EC::NoneErr, "empty DDL"));
-        };
+    pub fn new(db_path: &String, app_name: &String, _ddl_path: &String) -> RS<Self> {
         let _db_path = db_path.clone();
         let _app_name = app_name.clone();
         let result = blocking::run_async(async move {
-            let r = LSAsyncConnInner::new(_db_path, _app_name, sql_prepare).await;
+            let r = LSAsyncConnInner::new(_db_path, _app_name).await;
             r
         })?;
 
@@ -138,12 +128,14 @@ impl LSSyncConn {
             let boxed = datum.clone_boxed();
             params_boxed.push(boxed);
         }
+        let desc = param.tuple_desc()?;
 
-        self.inner.async_query(sql_boxed, params_boxed.as_slice())
+        self.inner
+            .async_query(sql_boxed, params_boxed.as_slice(), desc.into_fields())
     }
 
     pub fn sync_command(&self, sql: &dyn SQLStmt, param: &dyn SQLParams) -> RS<u64> {
-        let sql_boxed = sql.clone_boxed();
+        let sql_text = sql.to_string();
         let n = param.size();
         let mut params_boxed = Vec::with_capacity(n as usize);
         for i in 0..n {
@@ -151,7 +143,9 @@ impl LSSyncConn {
             let boxed = datum.clone_boxed();
             params_boxed.push(boxed);
         }
-        self.inner.async_command(sql_boxed, params_boxed.as_slice())
+        let desc = param.tuple_desc()?;
+        self.inner
+            .async_command(sql_text, params_boxed, desc.into_fields())
     }
 
     pub fn sync_commit(&self) -> RS<()> {
@@ -164,7 +158,7 @@ impl LSSyncConn {
 }
 
 impl LSAsyncConnInner {
-    pub async fn new(db_path: String, app_name: String, prepare: SQLPrepare) -> RS<Self> {
+    pub async fn new(db_path: String, app_name: String) -> RS<Self> {
         let db = get_db(db_path, app_name).await?;
         let conn = db
             .connect()
@@ -189,7 +183,6 @@ impl LSAsyncConnInner {
 
         Ok(Self {
             conn,
-            prepare,
             trans: LockedTrans {
                 trans: Arc::new(Default::default()),
             },
@@ -213,7 +206,7 @@ impl LSAsyncConnInner {
 
     pub fn tx_move_out(&self) -> RS<LSTrans> {
         let opt = self.trans.tx_move()?;
-        let ls_trans = opt.ok_or_else(||m_error!(EC::NoSuchElement, "no existing transaction"))?;
+        let ls_trans = opt.ok_or_else(|| m_error!(EC::NoSuchElement, "no existing transaction"))?;
         Ok(ls_trans)
     }
 
@@ -240,21 +233,41 @@ impl LSAsyncConnInner {
         &self,
         sql: SQL,
         param: PARAMS,
+        desc: Vec<DatumDesc>,
     ) -> RS<(Arc<dyn ResultSet>, Arc<TupleFieldDesc>)> {
-        let (s, desc) = self.prepare.replace_query(sql, param)?;
-        let _desc = desc.clone();
+        let conn = self.conn.clone();
         let trans = self.trans.clone();
-        let f = async move { Self::async_query_gut(trans, s, desc).await };
+        let param_boxed = param
+            .as_slice()
+            .iter()
+            .map(|e| e.as_datum_dyn_ref().clone_boxed())
+            .collect();
+        let sql_str = sql.as_sql_stmt_ref().to_string();
+        let f = async move { Self::async_query_gut(conn, trans, sql_str, param_boxed, desc).await };
         let r = blocking::run_async(f)?;
         let (rs, desc) = r?;
         Ok((rs, desc))
     }
 
+    async fn replace_query(
+        connection: Connection,
+        sql: String,
+        param: Vec<Box<dyn DatumDyn>>,
+        param_desc: Vec<DatumDesc>,
+    ) -> RS<(String, Arc<TupleFieldDesc>)> {
+        let sql = Self::replace_placeholder(&sql, &param_desc, &param)?;
+        let desc = ls_desc::desc_projection(&connection, &sql).await?;
+        Ok((sql, Arc::new(TupleFieldDesc::new(desc))))
+    }
+
     async fn async_query_gut(
+        conn: Connection,
         trans: LockedTrans,
         sql: String,
-        result_desc: Arc<TupleFieldDesc>,
+        params: Vec<Box<dyn DatumDyn>>,
+        param_desc: Vec<DatumDesc>,
     ) -> RS<(Arc<dyn ResultSet>, Arc<TupleFieldDesc>)> {
+        let (sql, result_desc) = Self::replace_query(conn, sql, params, param_desc).await?;
         let _desc = result_desc.clone();
         let rs = Self::transaction(
             trans,
@@ -265,14 +278,51 @@ impl LSAsyncConnInner {
         Ok((rs, result_desc))
     }
 
-    fn async_command<SQL: AsSQLStmtRef, PARAMS: AsSlice<Element = Item>, Item: AsDatumDynRef>(
+    pub fn replace_placeholder(
+        sql_string: &String,
+        desc: &Vec<DatumDesc>,
+        param: &Vec<Box<dyn DatumDyn>>,
+    ) -> RS<String> {
+        let placeholder_str = "?";
+        let placeholder_str_len = placeholder_str.len();
+        let vec_indices: Vec<_> = sql_string
+            .match_indices(placeholder_str)
+            .into_iter()
+            .collect();
+        if desc.len() != param.as_slice().len() || desc.len() != vec_indices.len() {
+            return Err(m_error!(
+                EC::ParseErr,
+                "parameter and placeholder count mismatch"
+            ));
+        }
+
+        let mut start_pos = 0;
+        let mut sql_after_replaced = "".to_string();
+        for i in 0..desc.len() {
+            let _s = &sql_string[start_pos..vec_indices[i].0];
+            sql_after_replaced.push_str(_s);
+            sql_after_replaced.push_str(" ");
+            let s = param[i].to_printable(desc[i].dat_type().param())?;
+            sql_after_replaced.push_str(s.str());
+            sql_after_replaced.push_str(" ");
+            start_pos += _s.len() + placeholder_str_len;
+        }
+        if start_pos != sql_string.len() {
+            sql_after_replaced.push_str(&sql_string[start_pos..]);
+        }
+        sql_after_replaced.push_str(" ");
+        Ok(sql_after_replaced)
+    }
+
+    fn async_command(
         &self,
-        sql: SQL,
-        param: PARAMS,
+        sql: String,
+        param: Vec<Box<dyn DatumDyn>>,
+        desc: Vec<DatumDesc>,
     ) -> RS<u64> {
-        let s = self.prepare.replace_command(sql, param)?;
+        let sql = Self::replace_placeholder(&sql, &desc, &param)?;
         let trans = self.trans.clone();
-        let result = blocking::run_async(async move { Self::async_command_gut(trans, s).await })?;
+        let result = blocking::run_async(async move { Self::async_command_gut(trans, sql).await })?;
         result
     }
 

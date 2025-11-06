@@ -20,7 +20,7 @@ pub trait Datum: DatumDyn + Clone + 'static {
     fn datum_desc() -> &'static DatumDesc;
 }
 
-pub trait DatumDyn: fmt::Debug + Sync + Any {
+pub trait DatumDyn: fmt::Debug + Send + Sync + Any {
     fn dat_type_id_self(&self) -> RS<DatTypeID>;
 
     fn to_typed(&self, param: &ParamObj) -> RS<DatTyped>;
@@ -388,12 +388,18 @@ impl DatumDyn for String {
 pub fn binary_to_typed<T: 'static + Clone + DatumDyn, S: AsRef<str>>(
     data: &[u8],
     type_str: S,
-) -> T {
-    let (id, _) = dt_lang_name_to_id(type_str.as_ref()).unwrap();
+) -> RS<T> {
+    let (id, _) = dt_lang_name_to_id(type_str.as_ref()).ok_or_else(|| {
+        m_error!(
+            EC::TypeErr,
+            format!("No typa name {} not found", type_str.as_ref())
+        )
+    })?;
     let param = ParamObj::default_for(id);
-    let internal = id.fn_recv()(data, &param).unwrap();
+    let internal = id.fn_recv()(data, &param)
+        .map_err(|e| m_error!(EC::TypeBaseErr, "convert data format error", e))?;
     let t = internal.to_typed_ref::<T>();
-    t.clone()
+    Ok(t.clone())
 }
 
 pub fn binary_from_typed<T: 'static + DatumDyn + Clone, S: AsRef<str>>(

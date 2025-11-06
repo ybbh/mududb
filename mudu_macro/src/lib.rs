@@ -1,278 +1,141 @@
+use mudu::common::result::RS;
+use mudu::error::ec::EC;
+use mudu::m_error;
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{quote, ToTokens};
+use syn::{parse_macro_input, GenericArgument, ItemFn, PathArguments, ReturnType, Type};
 
+const RESULT_TYPE_NAME: &str = "RS";
 #[proc_macro_attribute]
-pub fn mudu_proc(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    // todo do SQL semantic check here
-    let input_fn = syn::parse_macro_input!(item as syn::ItemFn);
+pub fn mudu_proc(_args: TokenStream, input: TokenStream) -> TokenStream {
+    let input_fn = parse_macro_input!(input as ItemFn);
 
-    let fn_ident = &input_fn.sig.ident; // function name
-    let fn_generics = &input_fn.sig.generics;
-    let fn_input = &input_fn.sig.inputs;
-    let fn_output = &input_fn.sig.output;
-
-    let fn_vis = &input_fn.vis;
-    // build new function name
-    let fn_inner_ident = syn::Ident::new(
-        &format!(
-            "{}{}",
-            mudu::procedure::proc::MUDU_PROC_INNER_PREFIX,
-            fn_ident
-        ),
-        fn_ident.span(),
-    );
+    // function name
+    let fn_name = &input_fn.sig.ident;
+    let fn_name_str = fn_name.to_string();
     let fn_wrapper_ident = syn::Ident::new(
-        &format!("{}{}", mudu::procedure::proc::MUDU_PROC_PREFIX, fn_ident),
-        fn_ident.span(),
+        &format!("{}{}", mudu::procedure::proc::MUDU_PROC_PREFIX, fn_name),
+        fn_name.span(),
     );
+
+    let fn_inner_ident = syn::Ident::new(
+        &format!("{}{}", mudu::procedure::proc::MUDU_PROC_INNER_PREFIX, fn_name),
+        fn_name.span(),
+    );
+
     let fn_argv_desc = syn::Ident::new(
-        &format!(
-            "{}{}",
-            mudu::procedure::proc::MUDU_PROC_ARGV_DESC_PREFIX,
-            fn_ident
-        ),
-        fn_ident.span(),
+        &format!("{}{}", mudu::procedure::proc::MUDU_PROC_ARGV_DESC_PREFIX, fn_name),
+        fn_name.span(),
     );
     let fn_result_desc = syn::Ident::new(
-        &format!(
-            "{}{}",
-            mudu::procedure::proc::MUDU_PROC_RESULT_DESC_PREFIX,
-            fn_ident
-        ),
-        fn_ident.span(),
+        &format!("{}{}", mudu::procedure::proc::MUDU_PROC_RESULT_DESC_PREFIX, fn_name),
+        fn_name.span(),
     );
     let fn_proc_desc = syn::Ident::new(
         &format!(
             "{}{}",
             mudu::procedure::proc::MUDU_PROC_PROC_DESC_PREFIX,
-            fn_ident
+            fn_name
         ),
-        fn_ident.span(),
+        fn_name.span(),
     );
-    let func_name = fn_ident.to_string();
-    match fn_vis {
-        syn::Visibility::Public(_) => {}
-        _ => {
-            panic!("mudu procedure must be public");
+
+    let mut types = Vec::new();
+    let mut ty_string = Vec::new();
+    let mut idents = Vec::new();
+    for (i, input_arg) in input_fn.sig.inputs.iter().enumerate() {
+        if let syn::FnArg::Typed(pat_type) = input_arg {
+            if i == 0 {
+                // skip first argument xid:XID
+                continue;
+            }
+
+            if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
+                idents.push(&pat_ident.ident);
+                ty_string.push(pat_type.ty.to_token_stream().to_string());
+                types.push(&pat_type.ty);
+            }
         }
     }
-    let argc = fn_input.len();
-    let check_argv = quote! {
-        if argv.len() + 1 != #argc {
-            return Err(
-                ::mudu::m_error!(
-                ::mudu::error::ec::EC::MuduError, format!("expected {} arguments, but found {}", #argc,  argv.len() + 1)));
-        }
-    };
-    let mut fn_invoke_handle_argv = Vec::new();
-    let mut tuple_desc_argv = Vec::new();
-    for (i, arg) in fn_input.iter().enumerate() {
-        let (ts1, ts2) = match arg {
-            syn::FnArg::Typed(pat_type) => {
-                let pat = &pat_type.pat;
-                let ty = &pat_type.ty;
 
-                // type name
-                let ty_name = quote!(#ty).to_string();
-                let pat_name = quote!(#pat).to_string();
-                if i == 0 {
-                    // the first argument is transaction id
-                    if ty_name != "XID" {
-                        panic!("The first argument must be a XID");
-                    }
-                    (
-                        quote! {
-                            let #pat: #ty = #pat;
-                        },
-                        quote! {},
-                    )
-                } else {
-                    (
-                        quote! {
-                            let #pat: #ty = ::mudu::tuple::datum::binary_to_typed::<#ty, _>(&argv[#i - 1], #ty_name);
-                        },
-                        quote! {
-                            {
-                                let (id, _) = mudu::data_type::dt_impl::lang::rust::dt_lang_name_to_id(&#ty_name).unwrap();
-                                let #pat : ::mudu::tuple::datum_desc::DatumDesc = ::mudu::tuple::datum_desc::DatumDesc::new(
-                                  #pat_name.to_string(),
-                                  ::mudu::data_type::dat_type::DatType::new_with_default_param(id)
-                                );
-                                #pat
-                            },
-                        },
-                    )
-                }
-            }
-            _ => {
-                panic!("cannot be self");
-            }
-        };
-        fn_invoke_handle_argv.push(ts1);
-        tuple_desc_argv.push(ts2);
-    }
-
-    let vec_pat: Vec<&Box<syn::Pat>> = fn_input
-        .iter()
-        .filter_map(|arg| match arg {
-            syn::FnArg::Typed(pat_type) => Some(&pat_type.pat),
-            _ => None,
+    // argument conversion
+    let mut param_conversions: Vec<_> = Vec::new();
+    for (i, ty) in types.iter().enumerate() {
+        let type_str = &ty_string[i];
+        let _ident = idents[i];
+        param_conversions.push(quote! {
+            ::mudu::tuple::datum::binary_to_typed::<#ty, _>(&param.param_vec()[#i], #type_str)?
         })
-        .collect();
+    }
 
-    let (handling_return, tuple_desc_result) = if let syn::ReturnType::Type(_, return_type) =
-        fn_output
-    {
-        match &**return_type {
-            syn::Type::Path(path) => {
-                if path.path.segments.len() != 1 {
-                    panic!("must be result type")
-                } else {
-                    let path_segment = &path.path.segments[0];
-                    match &path_segment.arguments {
-                        syn::PathArguments::AngleBracketed(template_argv) => {
-                            if template_argv.args.len() != 1 {
-                                panic!("must be 1 argument")
-                            }
-                            let arg = &template_argv.args[0];
-                            let mut vec_return_binary = vec![];
-                            let mut vec_return_datum_desc = vec![];
-                            match arg {
-                                syn::GenericArgument::Type(ty) => match ty {
-                                    syn::Type::Tuple(tuple) => {
-                                        for (i, elem_type) in tuple.elems.iter().enumerate() {
-                                            let index = syn::Index::from(i);
-                                            let type_str = quote!(#elem_type).to_string();
-                                            let ts1 = quote! {
-                                                    ::mudu::tuple::datum::binary_from_typed(&ret.#index, #type_str)
-                                            };
-                                            vec_return_binary.push(ts1);
+    let (_ret_type, inner_type) = handle_return_type(&input_fn).unwrap();
 
-                                            let ts2 = quote! {
-                                                {
-                                                    let (id, _) = mudu::data_type::dt_impl::lang::rust::dt_lang_name_to_id(&#type_str).unwrap();
-                                                    let name = format!("ret_{}", #index);
-                                                    let desc : ::mudu::tuple::datum_desc::DatumDesc = ::mudu::tuple::datum_desc::DatumDesc::new(
-                                                      name,
-                                                      ::mudu::data_type::dat_type::DatType::new_with_default_param(id)
-                                                    );
-                                                    desc
-                                                },
-                                            };
-                                            vec_return_datum_desc.push(ts2);
-                                        }
-                                        (vec_return_binary, vec_return_datum_desc)
-                                    }
-                                    syn::Type::Path(path) => {
-                                        let index = 0;
-                                        let type_str = quote!(#path).to_string();
-                                        let ts1 = quote! {
-                                           ::mudu::tuple::datum::binary_from_typed(&ret, #type_str)
-                                        };
-                                        vec_return_binary.push(ts1);
-                                        let ts2 = quote! {
-                                            {
-                                                let (id, _) = mudu::data_type::dt_impl::lang::rust::dt_lang_name_to_id(&#type_str).unwrap();
-                                                let name = format!("ret_{}", #index);
-                                                let desc : ::mudu::tuple::datum_desc::DatumDesc = ::mudu::tuple::datum_desc::DatumDesc::new(
-                                                  name,
-                                                  ::mudu::data_type::dat_type::DatType::new_with_default_param(id)
-                                                );
-                                                desc
-                                            },
-                                        };
-                                        vec_return_datum_desc.push(ts2);
-                                        (vec_return_binary, vec_return_datum_desc)
-                                    }
-                                    syn::Type::Paren(paren) => {
-                                        let elem = &paren.elem;
-                                        let index = 0;
-                                        let type_str = quote!(#elem).to_string();
-                                        let ts1 = quote! {
-                                           ::mudu::tuple::datum::binary_from_typed(&ret.#index, #type_str)
-                                        };
-                                        vec_return_binary.push(ts1);
-                                        let ts2 = quote! {
-                                            {
-                                                let (id, _) = mudu::data_type::dt_impl::lang::rust::dt_lang_name_to_id(&#type_str).unwrap();
-                                                let name = format!("ret_{}", #index);
-                                                let desc : ::mudu::tuple::datum_desc::DatumDesc = ::mudu::tuple::datum_desc::DatumDesc::new(
-                                                  name,
-                                                  ::mudu::data_type::dat_type::DatType::new_with_default_param(id)
-                                                );
-                                                desc
-                                            },
-                                        };
-                                        vec_return_datum_desc.push(ts2);
-                                        (vec_return_binary, vec_return_datum_desc)
-                                    }
-                                    _ => {
-                                        panic!("must be a tuple in Result<> type, but {:?}", ty)
-                                    }
-                                },
-                                _ => {
-                                    panic!("must be type argument")
-                                }
-                            }
-                        }
-                        _ => {
-                            panic!("must be angle bracketed")
-                        }
-                    }
-                }
-            }
-            _ => {
-                panic!("must be Result type")
-            }
+    let return_desc_construction = build_return_desc(&inner_type);
+
+    let invoke_handling = if is_vec_return_type(&inner_type) {
+        quote! {
+            let return_desc = #return_desc_construction;
+            let res = #fn_name(param.xid(), #(#param_conversions),*);
+            Ok(::mudu::procedure::proc_result::ProcResult::from_vec(res, &return_desc)?)
+        }
+    } else if is_tuple_return_type(&inner_type) {
+        quote! {
+            let return_desc = #return_desc_construction;
+            let res = #fn_name(param.xid(), #(#param_conversions),*);
+            Ok(::mudu::procedure::proc_result::ProcResult::from(res, &return_desc)?)
         }
     } else {
-        panic!("must be a Result type")
+        // basic type
+        quote! {
+            let return_desc = #return_desc_construction;
+            let res = #fn_name(param.xid(), #(#param_conversions),*);
+            let tuple = (res,);
+            Ok(::mudu::procedure::proc_result::ProcResult::from(tuple, &return_desc)?)
+        }
     };
 
-    let expanded = quote! {
+    let output = quote! {
         #input_fn
 
-        pub fn #fn_inner_ident #fn_generics (xid:XID, argv: Vec<Vec<u8>>) -> ::mudu::common::result::RS<Vec<Vec<u8>>> {
-            (#check_argv);
-            #(#fn_invoke_handle_argv)*
-            let ret = #fn_ident(#( #vec_pat ),*)?;
-            Ok(vec![#(#handling_return),*])
-        }
-
         #[unsafe(no_mangle)]
-        pub extern "C" fn #fn_wrapper_ident #fn_generics(p1_ptr: *const u8, p1_len: usize, p2_ptr: *mut u8, p2_len: usize) -> i32 {
-            ::mudu::procedure::proc::invoke_proc(
+        pub extern "C" fn #fn_wrapper_ident (p1_ptr: *const u8, p1_len: usize, p2_ptr: *mut u8, p2_len: usize) -> i32 {
+            ::mudu::procedure::proc::invoke_proc_wrapper(
                 p1_ptr, p1_len,
                 p2_ptr, p2_len,
-                #fn_inner_ident #fn_generics
+                #fn_inner_ident
             )
         }
 
-        pub fn #fn_argv_desc #fn_generics() -> &'static ::mudu::tuple::tuple_field_desc::TupleFieldDesc {
+        pub fn #fn_inner_ident(
+            param: ::mudu::procedure::proc_param::ProcParam,
+        ) -> ::mudu::common::result::RS<::mudu::procedure::proc_result::ProcResult> {
+            // generate tuple desc
+            let desc = <(#(#types),*)  as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static();
+
+            #invoke_handling
+        }
+
+        pub fn #fn_argv_desc()  -> &'static ::mudu::tuple::tuple_field_desc::TupleFieldDesc {
             static ARGV_DESC: std::sync::OnceLock<::mudu::tuple::tuple_field_desc::TupleFieldDesc> =
                 std::sync::OnceLock::new();
             ARGV_DESC.get_or_init(||
                 {
-                    ::mudu::tuple::tuple_field_desc::TupleFieldDesc::new(vec![
-                        #(#tuple_desc_argv)*
-                    ])
+                    <(#(#types),*)  as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static()
                 }
             )
         }
 
-        pub fn #fn_result_desc #fn_generics() -> &'static ::mudu::tuple::tuple_field_desc::TupleFieldDesc {
+        pub fn #fn_result_desc() -> &'static ::mudu::tuple::tuple_field_desc::TupleFieldDesc {
             static RESULT_DESC: std::sync::OnceLock<::mudu::tuple::tuple_field_desc::TupleFieldDesc> =
                 std::sync::OnceLock::new();
             RESULT_DESC.get_or_init(||
                 {
-                    ::mudu::tuple::tuple_field_desc::TupleFieldDesc::new(vec![
-                        #(#tuple_desc_result)*
-                    ])
+                    #return_desc_construction
                 }
             )
         }
 
-        pub fn #fn_proc_desc #fn_generics() -> &'static ::mudu::procedure::proc_desc::ProcDesc {
+        pub fn #fn_proc_desc()  -> &'static ::mudu::procedure::proc_desc::ProcDesc {
             static PROC_DESC: std::sync::OnceLock<
                 ::mudu::procedure::proc_desc::ProcDesc,
             > = std::sync::OnceLock::new();
@@ -280,7 +143,7 @@ pub fn mudu_proc(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 .get_or_init(|| {
                     ::mudu::procedure::proc_desc::ProcDesc::new(
                         std::env!("CARGO_PKG_NAME").to_string(),
-                        #func_name.to_string(),
+                        #fn_name_str.to_string(),
                         #fn_argv_desc().clone(),
                         #fn_result_desc().clone()
                     )
@@ -288,5 +151,116 @@ pub fn mudu_proc(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    TokenStream::from(expanded)
+    output.into()
 }
+
+fn build_return_desc(inner_type: &Type) -> proc_macro2::TokenStream {
+    if is_vec_return_type(inner_type) {
+        // Vec<T>
+        if let Type::Path(type_path) = inner_type {
+            if let Some(segment) = type_path.path.segments.last() {
+                if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(GenericArgument::Type(element_type)) = args.args.first() {
+                        // for Vec<T>，use T
+                        if is_tuple_return_type(element_type) {
+                            // Vec<(T1, T2, ...)>
+                            return quote! {
+                                <#element_type  as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static()
+                            };
+                        } else {
+                            // Vec<T> - wrap with Vec<(T,)>
+                            return quote! {
+                                <(#element_type,) as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static()
+                            };
+                        }
+                    }
+                }
+            }
+        }
+    } else if is_tuple_return_type(inner_type) {
+        // a tuple (T1, T2, ...)
+        return quote! {
+            <#inner_type as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static()
+        };
+    } else {
+        // basic type T - use tuple (T,)
+        return quote! {
+            use ;
+            <(#inner_type,) as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static()
+        };
+    }
+
+    // default
+    quote! {
+        use ;
+        <() as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static()
+    }
+}
+// check if return a vec type
+fn is_vec_return_type(ty: &Type) -> bool {
+    if let Type::Path(type_path) = ty {
+        if let Some(segment) = type_path.path.segments.last() {
+            if segment.ident == "Vec" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+// check if return a tuple type
+fn is_tuple_return_type(ty: &Type) -> bool {
+    if let Type::Tuple(_) = ty {
+        return true;
+    }
+    false
+}
+
+
+// return (result type, inner type), eg. (Result<T, MError>, T)
+fn handle_return_type(item_fn: &ItemFn) -> RS<(Type, Type)> {
+    let return_type = &item_fn.sig.output;
+    let box_type = match return_type {
+        ReturnType::Default => {
+            panic!("A Mudu Procedure cannot return \"()\"")
+        }
+        ReturnType::Type(_, ty) => {
+            ty
+        }
+    };
+    let ty_path = if let Type::Path(type_path) = &(**box_type) {
+        if let Some(segment) = type_path.path.segments.last() {
+            if segment.ident == RESULT_TYPE_NAME {
+                type_path
+            } else {
+                return Err(m_error!(EC::ParseErr,
+                    format!("Expected Result type, found {}", segment.ident)
+                ));
+            }
+        } else {
+            return Err(m_error!(EC::ParseErr,"Expected Result type"));
+        }
+    } else {
+        return Err(m_error!(EC::ParseErr,"Expected Result type"));
+    };
+
+    // test generics parameters, it must be RS<T>,
+    let generics = if let PathArguments::AngleBracketed(args) =
+        &ty_path.path.segments.last().unwrap().arguments {
+        &args.args
+    } else {
+        return Err(m_error!(EC::ParseErr,"Result type must have generic parameters"));
+    };
+    if generics.len() != 1 {
+        return Err(m_error!(EC::ParseErr,format!("Result must have exactly 2 generic parameters, found {}", generics.len())));
+    }
+
+    // retrieve T and E type in Result<T, E>
+    let t_type = match &generics[0] {
+        GenericArgument::Type(ty) => ty,
+        _ => return Err(m_error!(EC::ParseErr, "Expected type parameter for T")),
+    };
+
+    Ok((*box_type.clone(), t_type.clone()))
+}
+

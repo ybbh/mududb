@@ -17,8 +17,8 @@ use mudu::error::err::MError;
 use mudu::m_error;
 use mudu::tuple::datum::DatumDyn;
 use mudu::tuple::typed_bin::TypedBin;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::cmp::min;
 use wasmtime::{Caller, Extern, Memory};
 

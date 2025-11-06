@@ -28,8 +28,9 @@ jobs:
 
       - name: Installing Prerequisites (Linux)
         if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update &&
-             sudo apt-get install build-essential curl liburing-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl liburing-dev
 
       - name: Cache Cargo Registry
         uses: actions/cache@v3
@@ -42,8 +43,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo
 
+      - name: Clean cargo cache
+        run: cargo clean
+
       - name: Build
-        run: cargo build
+        run: cargo build --release
 
       - name: Test
-        run: cargo test
+        run: cargo test --release

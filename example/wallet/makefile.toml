@@ -53,7 +53,7 @@ script = [
 condition = { platforms = ["windows"] }
 script = '''
 set WASM_DEST_DIR="%CARGO_MAKE_WORKING_DIRECTORY%\\%MOD_DIR%"
-set WASM_SRC_PATH="%CARGO_MAKE_WORKING_DIRECTORY%\..\\target\\wasm32-wasip1\\%PROFILE%\\%WASM_FILE%"
+set WASM_SRC_PATH="%CARGO_MAKE_WORKING_DIRECTORY%\..\..\\target\\wasm32-wasip1\\%PROFILE%\\%WASM_FILE%"
 mkdir "%WASM_DEST_DIR%"
 echo %WASM_SRC_PATH%
 echo %WASM_DEST_DIR%
