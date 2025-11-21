@@ -1,15 +1,16 @@
+use mudu::data_type::dat_prim::DatPrim;
 use mudu::data_type::dat_type::DatType;
 
 #[derive(Debug, Clone)]
 pub struct TableColumnDef {
     column_name: String,
-    data_type: DatType,
+    data_type: DatPrim,
     is_unique: bool,
     not_null: bool,
 }
 
 impl TableColumnDef {
-    pub fn new(column_name: String, data_type: DatType, is_unique: bool, not_null: bool) -> Self {
+    pub fn new(column_name: String, data_type: DatPrim, is_unique: bool, not_null: bool) -> Self {
         Self {
             column_name,
             data_type,
@@ -22,8 +23,12 @@ impl TableColumnDef {
         &self.column_name
     }
 
-    pub fn data_type(&self) -> &DatType {
+    pub fn data_type(&self) -> &DatPrim {
         &self.data_type
+    }
+
+    pub fn dat_type(&self) -> &DatType {
+        &self.data_type.type_obj()
     }
 
     pub fn is_unique(&self) -> bool {

@@ -5,12 +5,12 @@ use crate::contract::timestamp::Timestamp;
 use crate::contract::version_tuple::VersionTuple;
 use crate::contract::x_lock_mgr::XLockMgr;
 use crate::contract::xl_rec::XLRec;
-use crate::sync::a_mutex::AMutex;
 use mudu::common::buf::Buf;
 use mudu::common::id::{gen_oid, OID};
 use mudu::common::result::RS;
 use mudu::common::update_delta::UpdateDelta;
 use mudu::common::xid::XID;
+use mudu_utils::sync::a_mutex::AMutex;
 use mudu_utils::task_trace;
 use std::sync::Arc;
 

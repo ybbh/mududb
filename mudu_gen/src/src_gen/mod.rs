@@ -6,4 +6,3 @@ mod src_builder;
 pub mod src_gen;
 pub mod table_def;
 mod test_mudul_parse;
-mod test_mudul_src_gen;

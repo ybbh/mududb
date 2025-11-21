@@ -1,9 +1,9 @@
 use crate::rust::wallets::object::Wallets;
 use mudu::common::result::RS;
 use mudu::common::xid::XID;
+use mudu::data_type::datum::DatumDyn;
 use mudu::database::attr_value::AttrValue;
 use mudu::error::ec::EC::MuduError;
-use mudu::tuple::datum::DatumDyn;
 use mudu::{m_error, sql_params, sql_stmt};
 use mudu_macro::mudu_proc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -48,7 +48,7 @@ pub fn transfer_funds(xid: XID, from_user_id: i32, to_user_id: i32, amount: i32)
         return Err(m_error!(MuduError, "no such user"));
     };
 
-    if from_wallet.get_balance().as_ref().unwrap().get_value() < amount {
+    if *from_wallet.get_balance().as_ref().unwrap() < amount {
         return Err(m_error!(MuduError, "insufficient funds"));
     }
 
@@ -84,7 +84,7 @@ pub fn transfer_funds(xid: XID, from_user_id: i32, to_user_id: i32, amount: i32)
         return Err(m_error!(MuduError, "transfer fund failed"));
     }
 
-    // 3. Record the transaction
+    // 3. Entity the transaction
     let id = Uuid::new_v4().to_string();
     let insert_rows = mudu_command(
         xid,
@@ -147,7 +147,7 @@ pub fn delete_user(xid: XID, user_id: i32) -> RS<()> {
         .next_record()?
         .ok_or(m_error!(MuduError, "User wallet not found"))?;
 
-    if wallet.get_balance().as_ref().unwrap().get_value() != 0 {
+    if *wallet.get_balance().as_ref().unwrap() != 0 {
         return Err(m_error!(
             MuduError,
             "Cannot delete user with non-zero balance"
@@ -221,7 +221,7 @@ pub fn deposit(xid: XID, user_id: i32, amount: i32) -> RS<()> {
         return Err(m_error!(MuduError, "User wallet not found"));
     }
 
-    // Record transaction
+    // Entity transaction
     mudu_command(
         xid,
         sql_stmt!(
@@ -250,7 +250,7 @@ pub fn withdraw(xid: XID, user_id: i32, amount: i32) -> RS<()> {
         .next_record()?
         .ok_or_else(|| m_error!(MuduError, "User wallet not found"))?;
 
-    if wallet.get_balance().as_ref().unwrap().get_value() < amount {
+    if *wallet.get_balance().as_ref().unwrap() < amount {
         return Err(m_error!(MuduError, "Insufficient funds"));
     }
 
@@ -264,7 +264,7 @@ pub fn withdraw(xid: XID, user_id: i32, amount: i32) -> RS<()> {
         sql_params!(&(amount, now, user_id)),
     )?;
 
-    // Record transaction
+    // Entity transaction
     mudu_command(
         xid,
         sql_stmt!(
@@ -295,7 +295,7 @@ pub fn transfer(xid: XID, from_user_id: i32, to_user_id: i32, amount: i32) -> RS
     .next_record()?
     .ok_or_else(|| m_error!(MuduError, "Sender wallet not found"))?;
 
-    if sender_wallet.get_balance().as_ref().unwrap().get_value() < amount {
+    if *sender_wallet.get_balance().as_ref().unwrap() < amount {
         return Err(m_error!(MuduError, "Insufficient funds"));
     }
 
@@ -329,7 +329,7 @@ pub fn transfer(xid: XID, from_user_id: i32, to_user_id: i32, amount: i32) -> RS
         sql_params!(&(amount, now, to_user_id)),
     )?;
 
-    // Record transaction
+    // Entity transaction
     mudu_command(
         xid,
         sql_stmt!(
@@ -363,7 +363,7 @@ pub fn purchase(xid: XID, user_id: i32, amount: i32, description: String) -> RS<
     .next_record()?
     .ok_or_else(|| m_error!(MuduError, "Wallet not found"))?;
 
-    if wallet.get_balance().as_ref().unwrap().get_value() < amount {
+    if *wallet.get_balance().as_ref().unwrap() < amount {
         return Err(m_error!(MuduError, "Insufficient funds"));
     }
 
@@ -377,7 +377,7 @@ pub fn purchase(xid: XID, user_id: i32, amount: i32, description: String) -> RS<
         sql_params!(&(amount, now, user_id)),
     )?;
 
-    // Record transaction
+    // Entity transaction
     mudu_command(
         xid,
         sql_stmt!(
@@ -398,35 +398,40 @@ pub fn purchase(xid: XID, user_id: i32, amount: i32, description: String) -> RS<
 
 #[cfg(test)]
 mod tests {
-    use crate::rust::procedures::*;
+    use crate::rust::procedures;
+    use mudu::common::result::RS;
     use mudu::procedure::proc_desc::ProcDesc;
+    use mudu::this_file;
     use mudu::utils::app_proc_desc::AppProcDesc;
-    use mudu::utils::toml::to_toml_str;
+    use mudu::utils::toml::{to_toml_str, write_toml};
+    use std::path::PathBuf;
 
     #[test]
     fn test_gen_proc_desc() {
         _test_gen_proc_desc().unwrap();
     }
+
     fn _test_gen_proc_desc() -> RS<()> {
-        let vec = vec![
-            mudu_proc_desc_deposit(),
-            mudu_proc_desc_transfer(),
-            mudu_proc_desc_purchase(),
-            mudu_proc_desc_create_user(),
-            mudu_proc_desc_delete_user(),
-            mudu_proc_desc_transfer_funds(),
-            mudu_proc_desc_update_user(),
-            mudu_proc_desc_withdraw(),
-        ]
-        .iter()
-        .map(|e| (*e).clone())
-        .collect::<Vec<ProcDesc>>();
-        let mut app_proc_desc = AppProcDesc::new();
-        for desc in vec {
-            app_proc_desc.add(desc);
+        let mut app_proc_desc = AppProcDesc::new_empty();
+        for desc in vec![
+            procedures::mudu_proc_desc_deposit(),
+            procedures::mudu_proc_desc_transfer(),
+            procedures::mudu_proc_desc_purchase(),
+            procedures::mudu_proc_desc_create_user(),
+            procedures::mudu_proc_desc_delete_user(),
+            procedures::mudu_proc_desc_transfer_funds(),
+            procedures::mudu_proc_desc_update_user(),
+            procedures::mudu_proc_desc_withdraw(),
+        ] {
+            app_proc_desc.add(desc.clone())
         }
-        let toml_str = to_toml_str(&app_proc_desc)?;
-        println!("{}", toml_str);
+
+        let mut path_buf = PathBuf::from(this_file!());
+        path_buf.pop();
+        path_buf.pop();
+        path_buf.pop();
+        let path_buf = path_buf.join("toml").join("procedure.desc.toml");
+        write_toml(&app_proc_desc, &path_buf).unwrap();
         Ok(())
     }
 }

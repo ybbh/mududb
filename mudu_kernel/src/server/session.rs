@@ -26,7 +26,7 @@ use mudu::m_error;
 use pgwire::error::{PgWireError, PgWireResult};
 use pgwire::messages::PgWireBackendMessage;
 use sql_parser::ast::stmt_type::StmtType;
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
 /// session would be accessed in local thread
@@ -56,6 +56,12 @@ impl Session {
 
 pub struct DummyAuthSource;
 
+impl Debug for DummyAuthSource {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl AuthSource for DummyAuthSource {
     async fn get_password(&self, info: &LoginInfo) -> PgWireResult<Password> {
@@ -70,7 +76,7 @@ impl AuthSource for DummyAuthSource {
     }
 }
 
-async fn do_query<'a>(stmt: &StmtType, ctx: &dyn SsnCtx) -> PgWireResult<Response<'a>> {
+async fn do_query<'a>(stmt: &StmtType, ctx: &dyn SsnCtx) -> PgWireResult<Response> {
     let response = match stmt {
         StmtType::Command(stmt) => {
             let rows = run_cmd_stmt(todo!(), ctx)
@@ -90,15 +96,13 @@ async fn do_query<'a>(stmt: &StmtType, ctx: &dyn SsnCtx) -> PgWireResult<Respons
 
 #[async_trait]
 impl SimpleQueryHandler for Session {
-    async fn do_query<'a, C>(
-        &self,
-        _client: &mut C,
-        query: &'a str,
-    ) -> PgWireResult<Vec<Response<'a>>>
+    async fn do_query<C>(&self, client: &mut C, query: &str) -> PgWireResult<Vec<Response>>
     where
-        C: ClientInfo + Unpin + Send + Sync,
+        C: ClientInfo + ClientPortalStore + Sink<PgWireBackendMessage> + Unpin + Send + Sync,
+        C::Error: Debug,
+        PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>
     {
-        let query = self.parser.parse_sql(query, &[]).await?;
+        let query = self.parser.parse_sql::<C>(client, query, &[]).await?;
         let query_types = query.stmts();
         let mut result = vec![];
         for query_type in query_types {
@@ -153,17 +157,17 @@ impl ExtendedQueryHandler for Session {
         unimplemented!()
     }
 
-    async fn do_query<'a, 'b: 'a, C>(
-        &'b self,
-        _client: &mut C,
-        portal: &'a Portal<Self::Statement>,
-        _max_rows: usize,
-    ) -> PgWireResult<Response<'a>>
+    async fn do_query<C>(
+        &self,
+        client: &mut C,
+        portal: &Portal<Self::Statement>,
+        max_rows: usize,
+    ) -> PgWireResult<Response>
     where
         C: ClientInfo + ClientPortalStore + Sink<PgWireBackendMessage> + Unpin + Send + Sync,
         C::PortalStore: PortalStore<Statement=Self::Statement>,
         C::Error: Debug,
-        PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
+        PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>
     {
         let root_stmt = portal.statement.statement.clone();
         let r = do_query(todo!(), self).await?;

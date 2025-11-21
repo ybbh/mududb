@@ -12,16 +12,21 @@ MuduDB is database system primarily focused on OLTP (Online Transaction Processi
 
 **It is currently in an actively developing, early-stage phase for demonstration purposes only.**
 
-It implements a range of innovative features designed to leverage modern AI and cloud computing technologies, aiming to significantly improve data system development efficiency and optimize resource utilization.
+It implements a range of innovative features designed to leverage modern AI and cloud computing technologies, aiming to
+significantly improve data system development efficiency and optimize resource utilization.
 
 ---
+
 ## Architecture
+
 <img src="doc/pic/architecture.png" width="80%">
 
 ---
+
 ## [How to start](doc/en/how_to_start.md)
 
 ---
+
 ## [Innovative features](doc/en/innovative.md)
 
 ---

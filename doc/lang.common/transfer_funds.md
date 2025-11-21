@@ -32,7 +32,7 @@ pub fn transfer_funds(xid: XID, from_user_id: i32, to_user_id: i32, amount: i32)
         return Err(m_error!(MuduError, "no such user"));
     };
 
-    if from_wallet.get_balance().as_ref().unwrap().get_value() < amount {
+    if *from_wallet.get_balance().as_ref().unwrap() < amount {
         return Err(m_error!(MuduError, "insufficient funds"));
     }
 
@@ -68,7 +68,7 @@ pub fn transfer_funds(xid: XID, from_user_id: i32, to_user_id: i32, amount: i32)
         return Err(m_error!(MuduError, "transfer fund failed"));
     }
 
-    // 3. Record the transaction
+    // 3. Entity the transaction
     let id = Uuid::new_v4().to_string();
     let insert_rows = mudu_command(
         xid,

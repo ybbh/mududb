@@ -1,11 +1,11 @@
 use crate::common::result::RS;
 use crate::database::context::Context;
+use crate::database::entity::Entity;
 use crate::database::predicate::Predicate;
 use crate::database::project::Project;
-use crate::database::record::Record;
 use std::marker::PhantomData;
 
-pub struct Iter<R: Record> {
+pub struct Iter<R: Entity> {
     phantom: PhantomData<R>,
 }
 
@@ -16,7 +16,7 @@ pub trait Iterator {
         unimplemented!()
     }
 }
-impl<R: Record> Iter<R> {
+impl<R: Entity> Iter<R> {
     pub fn new() -> Self {
         Self {
             phantom: Default::default(),
@@ -24,7 +24,7 @@ impl<R: Record> Iter<R> {
     }
 }
 
-impl<R: Record> Iterator for Iter<R> {
+impl<R: Entity> Iterator for Iter<R> {
     type Item = R;
 
     fn next(&self) -> RS<Option<Self::Item>> {
@@ -32,7 +32,7 @@ impl<R: Record> Iterator for Iter<R> {
     }
 }
 
-pub trait Table<R: Record> {
+pub trait Table<R: Entity> {
     fn table_name() -> &'static str;
 
     fn query(&self, context: &Context, predicate: &Predicate, project: &Project) -> RS<Iter<R>>;

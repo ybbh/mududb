@@ -1,7 +1,7 @@
 use crate::common::result::RS;
 use crate::database::db_conn::DBConn;
-use crate::database::record::Record;
-use crate::database::record_set::RecordSet;
+use crate::database::entity::Entity;
+use crate::database::entity_set::RecordSet;
 use crate::database::sql_params::SQLParams;
 use crate::database::sql_stmt::SQLStmt;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ impl Context {
         self.conn.clone()
     }
 
-    pub fn query<R: Record>(&self, sql: &dyn SQLStmt, param: &dyn SQLParams) -> RS<RecordSet<R>> {
+    pub fn query<R: Entity>(&self, sql: &dyn SQLStmt, param: &dyn SQLParams) -> RS<RecordSet<R>> {
         let (rs, ds) = self.conn.query(sql, param)?;
         let r = RecordSet::<R>::new(rs, ds);
         Ok(r)

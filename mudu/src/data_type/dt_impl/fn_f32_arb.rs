@@ -1,24 +1,23 @@
+use crate::data_type::dat_type::DatType;
+use crate::data_type::dat_type_id::DatTypeID;
+use crate::data_type::dat_value::DatValue;
 use crate::data_type::dt_fn_arbitrary::FnArbitrary;
-use crate::data_type::dt_impl::dat_type_id::DatTypeID;
-use crate::data_type::param_obj::ParamObj;
-
-use crate::data_type::dt_impl::dat_typed::DatTyped;
 use arbitrary::{Arbitrary, Unstructured};
 
-pub fn fn_f32_arb_val(u: &mut Unstructured, _p: &ParamObj) -> arbitrary::Result<DatTyped> {
-    Ok(DatTyped::F32(f32::arbitrary(u)?))
+pub fn fn_f32_arb_val(u: &mut Unstructured, dat_type: &DatType) -> arbitrary::Result<DatValue> {
+    Ok(DatValue::from_datum(f32::arbitrary(u)?, dat_type).map_err(|_| arbitrary::Error::IncorrectFormat)?)
 }
 
-pub fn fn_f32_arb_printable(u: &mut Unstructured, _p: &ParamObj) -> arbitrary::Result<String> {
+pub fn fn_f32_arb_printable(u: &mut Unstructured, _: &DatType) -> arbitrary::Result<String> {
     Ok(f32::arbitrary(u)?.to_string())
 }
 
-pub fn fn_f32_arb_dt_param(_u: &mut Unstructured) -> arbitrary::Result<ParamObj> {
-    Ok(ParamObj::new_empty(DatTypeID::F32))
+pub fn fn_f32_arb_dt_param(_u: &mut Unstructured) -> arbitrary::Result<DatType> {
+    Ok(DatType::new_no_param(DatTypeID::F32))
 }
 
 pub const FN_F32_ARBITRARY: FnArbitrary = FnArbitrary {
     param: fn_f32_arb_dt_param,
-    value_typed: fn_f32_arb_val,
+    value_object: fn_f32_arb_val,
     value_print: fn_f32_arb_printable,
 };

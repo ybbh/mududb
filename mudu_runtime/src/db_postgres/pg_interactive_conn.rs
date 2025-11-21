@@ -165,8 +165,8 @@ impl PGInteractive {
             sql_after_replaced.push_str(" ");
             let s = param
                 .get_idx_unchecked(i as u64)
-                .to_printable(desc[i].dat_type().param())?;
-            sql_after_replaced.push_str(s.str());
+                .to_textual(desc[i].dat_type())?;
+            sql_after_replaced.push_str(s.as_str());
             sql_after_replaced.push_str(" ");
             start_pos += _s.len() + placeholder_str_len;
         }

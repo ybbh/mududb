@@ -1,13 +1,12 @@
 use crate::common::result::RS;
-use crate::data_type::dt_impl::dat_type_id::DatTypeID;
-use crate::data_type::dt_impl::dat_typed::DatTyped;
-use crate::data_type::dt_param::ParamObj;
+use crate::data_type::dat_binary::DatBinary;
+use crate::data_type::dat_textual::DatTextual;
+use crate::data_type::dat_type_id::DatTypeID;
+use crate::data_type::dat_value::DatValue;
+use crate::data_type::datum::DatumDyn;
+use crate::data_type::dt_fn_param::DatType;
 use crate::error::ec::EC;
 use crate::m_error;
-use crate::tuple::dat_binary::DatBinary;
-use crate::tuple::dat_internal::DatInternal;
-use crate::tuple::dat_printable::DatPrintable;
-use crate::tuple::datum::DatumDyn;
 use std::fmt::{Debug, Formatter};
 
 #[derive(Clone)]
@@ -31,39 +30,30 @@ impl Debug for TypedBin {
 }
 
 impl DatumDyn for TypedBin {
-    fn dat_type_id_self(&self) -> RS<DatTypeID> {
+    fn dat_type_id(&self) -> RS<DatTypeID> {
         Ok(self.dat_type_id)
     }
 
-    fn to_typed(&self, param: &ParamObj) -> RS<DatTyped> {
-        let fn_recv = self.dat_type_id.fn_recv();
-        let internal = fn_recv(&self.bin, param)
-            .map_err(|e| m_error!(EC::TypeBaseErr, "to_typed error", e))?;
-        let fn_to_typed = self.dat_type_id.fn_to_typed();
-        let typed = fn_to_typed(&internal, param)
-            .map_err(|e| m_error!(EC::TypeBaseErr, "to_typed error", e))?;
-        Ok(typed)
-    }
 
-    fn to_binary(&self, _: &ParamObj) -> RS<DatBinary> {
+    fn to_binary(&self, _: &DatType) -> RS<DatBinary> {
         Ok(DatBinary::from(self.bin.clone()))
     }
 
-    fn to_printable(&self, param: &ParamObj) -> RS<DatPrintable> {
+    fn to_textual(&self, tyep_obj: &DatType) -> RS<DatTextual> {
         let fn_recv = self.dat_type_id.fn_recv();
-        let internal = fn_recv(&self.bin, param)
-            .map_err(|e| m_error!(EC::TypeBaseErr, "to_printable error", e))?;
+        let (internal, _) = fn_recv(&self.bin, tyep_obj)
+            .map_err(|e| m_error!(EC::TypeBaseErr, "to_textual error", e))?;
 
         let fn_output = self.dat_type_id.fn_output();
-        let output = fn_output(&internal, param)
-            .map_err(|e| m_error!(EC::TypeBaseErr, "to_printable error", e))?;
+        let output = fn_output(&internal, tyep_obj)
+            .map_err(|e| m_error!(EC::TypeBaseErr, "to_textual error", e))?;
         Ok(output)
     }
 
-    fn to_internal(&self, param: &ParamObj) -> RS<DatInternal> {
+    fn to_value(&self, type_obj: &DatType) -> RS<DatValue> {
         let fn_recv = self.dat_type_id.fn_recv();
-        let internal = fn_recv(&self.bin, param)
-            .map_err(|e| m_error!(EC::TypeBaseErr, "to_printable error", e))?;
+        let (internal, _) = fn_recv(&self.bin, type_obj)
+            .map_err(|e| m_error!(EC::TypeBaseErr, "to_textual error", e))?;
         Ok(internal)
     }
 

@@ -41,6 +41,7 @@ pub fn mudu_proc(_args: TokenStream, input: TokenStream) -> TokenStream {
     );
 
     let mut types = Vec::new();
+    let mut arg_names = Vec::new();
     let mut ty_string = Vec::new();
     let mut idents = Vec::new();
     for (i, input_arg) in input_fn.sig.inputs.iter().enumerate() {
@@ -52,19 +53,31 @@ pub fn mudu_proc(_args: TokenStream, input: TokenStream) -> TokenStream {
 
             if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
                 idents.push(&pat_ident.ident);
+                let arg_name = pat_ident.ident.to_string();
+                arg_names.push(arg_name);
                 ty_string.push(pat_type.ty.to_token_stream().to_string());
                 types.push(&pat_type.ty);
             }
         }
     }
 
+    let code_arg_names = quote! {
+        {
+            let _vec: Vec<String> = vec![
+                #(#arg_names),*
+            ].iter().map(|s| s.to_string()).collect();
+            _vec
+        }
+    };
+
     // argument conversion
     let mut param_conversions: Vec<_> = Vec::new();
     for (i, ty) in types.iter().enumerate() {
         let type_str = &ty_string[i];
         let _ident = idents[i];
+
         param_conversions.push(quote! {
-            ::mudu::tuple::datum::binary_to_typed::<#ty, _>(&param.param_vec()[#i], #type_str)?
+            ::mudu::data_type::datum::binary_to_typed::<#ty, _>(&param.param_vec()[#i], #type_str)?
         })
     }
 
@@ -72,13 +85,13 @@ pub fn mudu_proc(_args: TokenStream, input: TokenStream) -> TokenStream {
 
     let return_desc_construction = build_return_desc(&inner_type);
 
-    let invoke_handling = if is_vec_return_type(&inner_type) {
+    let invoke_handling = if is_vec_type(&inner_type) {
         quote! {
             let return_desc = #return_desc_construction;
             let res = #fn_name(param.xid(), #(#param_conversions),*);
             Ok(::mudu::procedure::proc_result::ProcResult::from_vec(res, &return_desc)?)
         }
-    } else if is_tuple_return_type(&inner_type) {
+    } else if is_tuple_type(&inner_type) {
         quote! {
             let return_desc = #return_desc_construction;
             let res = #fn_name(param.xid(), #(#param_conversions),*);
@@ -89,7 +102,7 @@ pub fn mudu_proc(_args: TokenStream, input: TokenStream) -> TokenStream {
         quote! {
             let return_desc = #return_desc_construction;
             let res = #fn_name(param.xid(), #(#param_conversions),*);
-            let tuple = (res,);
+            let tuple = res;
             Ok(::mudu::procedure::proc_result::ProcResult::from(tuple, &return_desc)?)
         }
     };
@@ -110,7 +123,7 @@ pub fn mudu_proc(_args: TokenStream, input: TokenStream) -> TokenStream {
             param: ::mudu::procedure::proc_param::ProcParam,
         ) -> ::mudu::common::result::RS<::mudu::procedure::proc_result::ProcResult> {
             // generate tuple desc
-            let desc = <(#(#types),*)  as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static();
+            let desc = <(#(#types),*)  as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static(&#code_arg_names);
 
             #invoke_handling
         }
@@ -120,7 +133,7 @@ pub fn mudu_proc(_args: TokenStream, input: TokenStream) -> TokenStream {
                 std::sync::OnceLock::new();
             ARGV_DESC.get_or_init(||
                 {
-                    <(#(#types),*)  as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static()
+                    <(#(#types),*)  as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static(&#code_arg_names)
                 }
             )
         }
@@ -155,49 +168,48 @@ pub fn mudu_proc(_args: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 fn build_return_desc(inner_type: &Type) -> proc_macro2::TokenStream {
-    if is_vec_return_type(inner_type) {
+    if is_vec_type(inner_type) {
         // Vec<T>
         if let Type::Path(type_path) = inner_type {
             if let Some(segment) = type_path.path.segments.last() {
                 if let PathArguments::AngleBracketed(args) = &segment.arguments {
                     if let Some(GenericArgument::Type(element_type)) = args.args.first() {
                         // for Vec<T>，use T
-                        if is_tuple_return_type(element_type) {
+                        return if is_tuple_type(element_type) {
                             // Vec<(T1, T2, ...)>
-                            return quote! {
-                                <#element_type  as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static()
-                            };
+                            quote! {
+                                <#element_type  as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static(&[])
+                            }
                         } else {
                             // Vec<T> - wrap with Vec<(T,)>
-                            return quote! {
-                                <(#element_type,) as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static()
-                            };
-                        }
+                            quote! {
+                                <(#element_type,) as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static(&[])
+                            }
+                        };
                     }
                 }
             }
         }
-    } else if is_tuple_return_type(inner_type) {
+    } else if is_tuple_type(inner_type) {
         // a tuple (T1, T2, ...)
         return quote! {
-            <#inner_type as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static()
+            <#inner_type as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static(&[])
         };
     } else {
         // basic type T - use tuple (T,)
         return quote! {
-            use ;
-            <(#inner_type,) as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static()
+            <(#inner_type,) as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static(&[])
         };
     }
 
     // default
     quote! {
         use ;
-        <() as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static()
+        <() as ::mudu::tuple::rs_tuple_datum::RsTupleDatum>::tuple_desc_static(&[])
     }
 }
 // check if return a vec type
-fn is_vec_return_type(ty: &Type) -> bool {
+fn is_vec_type(ty: &Type) -> bool {
     if let Type::Path(type_path) = ty {
         if let Some(segment) = type_path.path.segments.last() {
             if segment.ident == "Vec" {
@@ -209,7 +221,7 @@ fn is_vec_return_type(ty: &Type) -> bool {
 }
 
 // check if return a tuple type
-fn is_tuple_return_type(ty: &Type) -> bool {
+fn is_tuple_type(ty: &Type) -> bool {
     if let Type::Tuple(_) = ty {
         return true;
     }

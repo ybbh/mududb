@@ -1,14 +1,8 @@
-pub mod dat_internal;
-
 pub mod build_tuple;
 pub mod comparator;
-pub mod dat_binary;
-pub mod dat_printable;
-pub mod datum;
 pub mod datum_convert;
 pub mod datum_desc;
 pub mod datum_vec;
-pub mod enum_dat;
 pub mod enumerable_datum;
 mod field_desc;
 mod read_datum;

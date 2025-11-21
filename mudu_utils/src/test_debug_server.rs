@@ -2,7 +2,7 @@
 mod test {
     use crate::debug::async_debug_serve;
     use crate::log::log_setup;
-    use crate::notifier::Notifier;
+    use crate::notifier::NotifyWait;
     use crate::task::spawn_local_task_timeout;
     use std::net::SocketAddr;
     use std::time::Duration;
@@ -17,7 +17,7 @@ mod test {
         let runtime = Runtime::new().unwrap();
         let local = LocalSet::new();
         local.spawn_local(async move {
-            spawn_local_task_timeout(Notifier::new(), Duration::from_secs(1), "", async move {
+            spawn_local_task_timeout(NotifyWait::new(), Duration::from_secs(1), "", async move {
                 async_debug_serve(addr).await
             })
         });

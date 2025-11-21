@@ -1,13 +1,18 @@
 pub mod object {
+
     use lazy_static::lazy_static;
     use mudu::common::result::RS;
-    use mudu::database::attr_binary::AttrBinary;
-    use mudu::database::attr_set_get::{attr_get_binary, attr_set_binary};
+    use mudu::data_type::dat_binary::DatBinary;
+    use mudu::data_type::dat_textual::DatTextual;
+    use mudu::data_type::dat_type::DatType;
+    use mudu::data_type::dat_type_id::DatTypeID;
+    use mudu::data_type::dat_value::DatValue;
+    use mudu::data_type::datum::{Datum, DatumDyn};
+    use mudu::database::attr_field_access;
     use mudu::database::attr_value::AttrValue;
-    use mudu::database::record::Record;
-    use mudu::database::record_convert_tuple::{record_from_tuple, record_to_tuple};
-    use mudu::tuple::datum_convert::{datum_from_binary, datum_to_binary};
-    use mudu::tuple::tuple_field::TupleField;
+    use mudu::database::entity::Entity;
+    use mudu::database::entity_utils;
+    use mudu::tuple::datum_desc::DatumDesc;
     use mudu::tuple::tuple_field_desc::TupleFieldDesc;
 
     const TABLE_WAREHOUSE: &str = "warehouse";
@@ -21,118 +26,162 @@ pub mod object {
     const COLUMN_W_STATE: &str = "w_state";
     const COLUMN_W_ZIP: &str = "w_zip";
 
+    #[derive(Debug, Clone)]
     pub struct Warehouse {
-        w_id: Option<AttrWId>,
-        w_ytd: Option<AttrWYtd>,
-        w_tax: Option<AttrWTax>,
-        w_name: Option<AttrWName>,
-        w_street_1: Option<AttrWStreet1>,
-        w_street_2: Option<AttrWStreet2>,
-        w_city: Option<AttrWCity>,
-        w_state: Option<AttrWState>,
-        w_zip: Option<AttrWZip>,
+        w_id: Option<i32>,
+        w_ytd: Option<f64>,
+        w_tax: Option<f64>,
+        w_name: Option<String>,
+        w_street_1: Option<String>,
+        w_street_2: Option<String>,
+        w_city: Option<String>,
+        w_state: Option<String>,
+        w_zip: Option<String>,
     }
 
     impl Warehouse {
         pub fn new(
-            w_id: AttrWId,
-            w_ytd: AttrWYtd,
-            w_tax: AttrWTax,
-            w_name: AttrWName,
-            w_street_1: AttrWStreet1,
-            w_street_2: AttrWStreet2,
-            w_city: AttrWCity,
-            w_state: AttrWState,
-            w_zip: AttrWZip,
+            w_id: Option<i32>,
+            w_ytd: Option<f64>,
+            w_tax: Option<f64>,
+            w_name: Option<String>,
+            w_street_1: Option<String>,
+            w_street_2: Option<String>,
+            w_city: Option<String>,
+            w_state: Option<String>,
+            w_zip: Option<String>,
         ) -> Self {
             let s = Self {
-                w_id: Some(w_id),
-                w_ytd: Some(w_ytd),
-                w_tax: Some(w_tax),
-                w_name: Some(w_name),
-                w_street_1: Some(w_street_1),
-                w_street_2: Some(w_street_2),
-                w_city: Some(w_city),
-                w_state: Some(w_state),
-                w_zip: Some(w_zip),
+                w_id,
+                w_ytd,
+                w_tax,
+                w_name,
+                w_street_1,
+                w_street_2,
+                w_city,
+                w_state,
+                w_zip,
             };
             s
         }
 
-        pub fn set_w_id(&mut self, w_id: AttrWId) {
+        pub fn set_w_id(&mut self, w_id: i32) {
             self.w_id = Some(w_id);
         }
 
-        pub fn get_w_id(&self) -> &Option<AttrWId> {
+        pub fn get_w_id(&self) -> &Option<i32> {
             &self.w_id
         }
 
-        pub fn set_w_ytd(&mut self, w_ytd: AttrWYtd) {
+        pub fn set_w_ytd(&mut self, w_ytd: f64) {
             self.w_ytd = Some(w_ytd);
         }
 
-        pub fn get_w_ytd(&self) -> &Option<AttrWYtd> {
+        pub fn get_w_ytd(&self) -> &Option<f64> {
             &self.w_ytd
         }
 
-        pub fn set_w_tax(&mut self, w_tax: AttrWTax) {
+        pub fn set_w_tax(&mut self, w_tax: f64) {
             self.w_tax = Some(w_tax);
         }
 
-        pub fn get_w_tax(&self) -> &Option<AttrWTax> {
+        pub fn get_w_tax(&self) -> &Option<f64> {
             &self.w_tax
         }
 
-        pub fn set_w_name(&mut self, w_name: AttrWName) {
+        pub fn set_w_name(&mut self, w_name: String) {
             self.w_name = Some(w_name);
         }
 
-        pub fn get_w_name(&self) -> &Option<AttrWName> {
+        pub fn get_w_name(&self) -> &Option<String> {
             &self.w_name
         }
 
-        pub fn set_w_street_1(&mut self, w_street_1: AttrWStreet1) {
+        pub fn set_w_street_1(&mut self, w_street_1: String) {
             self.w_street_1 = Some(w_street_1);
         }
 
-        pub fn get_w_street_1(&self) -> &Option<AttrWStreet1> {
+        pub fn get_w_street_1(&self) -> &Option<String> {
             &self.w_street_1
         }
 
-        pub fn set_w_street_2(&mut self, w_street_2: AttrWStreet2) {
+        pub fn set_w_street_2(&mut self, w_street_2: String) {
             self.w_street_2 = Some(w_street_2);
         }
 
-        pub fn get_w_street_2(&self) -> &Option<AttrWStreet2> {
+        pub fn get_w_street_2(&self) -> &Option<String> {
             &self.w_street_2
         }
 
-        pub fn set_w_city(&mut self, w_city: AttrWCity) {
+        pub fn set_w_city(&mut self, w_city: String) {
             self.w_city = Some(w_city);
         }
 
-        pub fn get_w_city(&self) -> &Option<AttrWCity> {
+        pub fn get_w_city(&self) -> &Option<String> {
             &self.w_city
         }
 
-        pub fn set_w_state(&mut self, w_state: AttrWState) {
+        pub fn set_w_state(&mut self, w_state: String) {
             self.w_state = Some(w_state);
         }
 
-        pub fn get_w_state(&self) -> &Option<AttrWState> {
+        pub fn get_w_state(&self) -> &Option<String> {
             &self.w_state
         }
 
-        pub fn set_w_zip(&mut self, w_zip: AttrWZip) {
+        pub fn set_w_zip(&mut self, w_zip: String) {
             self.w_zip = Some(w_zip);
         }
 
-        pub fn get_w_zip(&self) -> &Option<AttrWZip> {
+        pub fn get_w_zip(&self) -> &Option<String> {
             &self.w_zip
         }
     }
 
-    impl Record for Warehouse {
+    impl Datum for Warehouse {
+        fn dat_type() -> &'static DatType {
+            lazy_static! {
+                static ref DAT_TYPE: DatType = entity_utils::entity_dat_type::<Warehouse>();
+            }
+            &DAT_TYPE
+        }
+
+        fn from_binary(binary: &[u8]) -> RS<Self> {
+            entity_utils::entity_from_binary(binary)
+        }
+
+        fn from_value(value: &DatValue) -> RS<Self> {
+            entity_utils::entity_from_value(value)
+        }
+
+        fn from_textual(textual: &str) -> RS<Self> {
+            entity_utils::entity_from_textual(textual)
+        }
+    }
+
+    impl DatumDyn for Warehouse {
+        fn dat_type_id(&self) -> RS<DatTypeID> {
+            entity_utils::entity_dat_type_id()
+        }
+
+        fn to_binary(&self, dat_type: &DatType) -> RS<DatBinary> {
+            entity_utils::entity_to_binary(self, dat_type)
+        }
+
+        fn to_textual(&self, dat_type: &DatType) -> RS<DatTextual> {
+            entity_utils::entity_to_textual(self, dat_type)
+        }
+
+        fn to_value(&self, dat_type: &DatType) -> RS<DatValue> {
+            entity_utils::entity_to_value(self, dat_type)
+        }
+
+        fn clone_boxed(&self) -> Box<dyn DatumDyn> {
+            entity_utils::entity_clone_boxed(self)
+        }
+    }
+
+    impl Entity for Warehouse {
         fn new_empty() -> Self {
             let s = Self {
                 w_id: None,
@@ -164,63 +213,113 @@ pub mod object {
             &TUPLE_DESC
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_WAREHOUSE
         }
 
-        fn from_tuple<T: AsRef<TupleField>, D: AsRef<TupleFieldDesc>>(row: T, desc: D) -> RS<Self> {
-            record_from_tuple::<Self, T, D>(row, desc)
-        }
-
-        fn to_tuple<D: AsRef<TupleFieldDesc>>(&self, desc: D) -> RS<TupleField> {
-            record_to_tuple(self, desc)
-        }
-
-        fn get_binary(&self, column: &str) -> RS<Option<Vec<u8>>> {
+        fn get_field_binary(&self, column: &str) -> RS<Option<Vec<u8>>> {
             match column {
-                COLUMN_W_ID => attr_get_binary(&self.w_id),
-                COLUMN_W_YTD => attr_get_binary(&self.w_ytd),
-                COLUMN_W_TAX => attr_get_binary(&self.w_tax),
-                COLUMN_W_NAME => attr_get_binary(&self.w_name),
-                COLUMN_W_STREET_1 => attr_get_binary(&self.w_street_1),
-                COLUMN_W_STREET_2 => attr_get_binary(&self.w_street_2),
-                COLUMN_W_CITY => attr_get_binary(&self.w_city),
-                COLUMN_W_STATE => attr_get_binary(&self.w_state),
-                COLUMN_W_ZIP => attr_get_binary(&self.w_zip),
+                COLUMN_W_ID => attr_field_access::attr_get_binary::<_>(&self.w_id),
+                COLUMN_W_YTD => attr_field_access::attr_get_binary::<_>(&self.w_ytd),
+                COLUMN_W_TAX => attr_field_access::attr_get_binary::<_>(&self.w_tax),
+                COLUMN_W_NAME => attr_field_access::attr_get_binary::<_>(&self.w_name),
+                COLUMN_W_STREET_1 => attr_field_access::attr_get_binary::<_>(&self.w_street_1),
+                COLUMN_W_STREET_2 => attr_field_access::attr_get_binary::<_>(&self.w_street_2),
+                COLUMN_W_CITY => attr_field_access::attr_get_binary::<_>(&self.w_city),
+                COLUMN_W_STATE => attr_field_access::attr_get_binary::<_>(&self.w_state),
+                COLUMN_W_ZIP => attr_field_access::attr_get_binary::<_>(&self.w_zip),
                 _ => {
                     panic!("unknown name");
                 }
             }
         }
 
-        fn set_binary<B: AsRef<[u8]>>(&mut self, column: &str, binary: B) -> RS<()> {
+        fn set_field_binary<B: AsRef<[u8]>>(&mut self, column: &str, binary: B) -> RS<()> {
             match column {
                 COLUMN_W_ID => {
-                    attr_set_binary(&mut self.w_id, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(&mut self.w_id, binary.as_ref())?;
                 }
                 COLUMN_W_YTD => {
-                    attr_set_binary(&mut self.w_ytd, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(&mut self.w_ytd, binary.as_ref())?;
                 }
                 COLUMN_W_TAX => {
-                    attr_set_binary(&mut self.w_tax, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(&mut self.w_tax, binary.as_ref())?;
                 }
                 COLUMN_W_NAME => {
-                    attr_set_binary(&mut self.w_name, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(&mut self.w_name, binary.as_ref())?;
                 }
                 COLUMN_W_STREET_1 => {
-                    attr_set_binary(&mut self.w_street_1, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(
+                        &mut self.w_street_1,
+                        binary.as_ref(),
+                    )?;
                 }
                 COLUMN_W_STREET_2 => {
-                    attr_set_binary(&mut self.w_street_2, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(
+                        &mut self.w_street_2,
+                        binary.as_ref(),
+                    )?;
                 }
                 COLUMN_W_CITY => {
-                    attr_set_binary(&mut self.w_city, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(&mut self.w_city, binary.as_ref())?;
                 }
                 COLUMN_W_STATE => {
-                    attr_set_binary(&mut self.w_state, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(&mut self.w_state, binary.as_ref())?;
                 }
                 COLUMN_W_ZIP => {
-                    attr_set_binary(&mut self.w_zip, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(&mut self.w_zip, binary.as_ref())?;
+                }
+                _ => {
+                    panic!("unknown name");
+                }
+            }
+            Ok(())
+        }
+        fn get_field_value(&self, column: &str) -> RS<Option<DatValue>> {
+            match column {
+                COLUMN_W_ID => attr_field_access::attr_get_value::<_>(&self.w_id),
+                COLUMN_W_YTD => attr_field_access::attr_get_value::<_>(&self.w_ytd),
+                COLUMN_W_TAX => attr_field_access::attr_get_value::<_>(&self.w_tax),
+                COLUMN_W_NAME => attr_field_access::attr_get_value::<_>(&self.w_name),
+                COLUMN_W_STREET_1 => attr_field_access::attr_get_value::<_>(&self.w_street_1),
+                COLUMN_W_STREET_2 => attr_field_access::attr_get_value::<_>(&self.w_street_2),
+                COLUMN_W_CITY => attr_field_access::attr_get_value::<_>(&self.w_city),
+                COLUMN_W_STATE => attr_field_access::attr_get_value::<_>(&self.w_state),
+                COLUMN_W_ZIP => attr_field_access::attr_get_value::<_>(&self.w_zip),
+                _ => {
+                    panic!("unknown name");
+                }
+            }
+        }
+
+        fn set_field_value<B: AsRef<DatValue>>(&mut self, column: &str, value: B) -> RS<()> {
+            match column {
+                COLUMN_W_ID => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.w_id, value)?;
+                }
+                COLUMN_W_YTD => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.w_ytd, value)?;
+                }
+                COLUMN_W_TAX => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.w_tax, value)?;
+                }
+                COLUMN_W_NAME => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.w_name, value)?;
+                }
+                COLUMN_W_STREET_1 => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.w_street_1, value)?;
+                }
+                COLUMN_W_STREET_2 => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.w_street_2, value)?;
+                }
+                COLUMN_W_CITY => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.w_city, value)?;
+                }
+                COLUMN_W_STATE => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.w_state, value)?;
+                }
+                COLUMN_W_ZIP => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.w_zip, value)?;
                 }
                 _ => {
                     panic!("unknown name");
@@ -230,399 +329,201 @@ pub mod object {
         }
     }
 
-    pub struct AttrWId {
-        value: i32,
-    }
-
-    impl AttrWId {}
-
-    impl AttrBinary for AttrWId {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: i32 = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrWId {}
 
     impl AttrValue<i32> for AttrWId {
-        fn new(datum: i32) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_WAREHOUSE
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_W_ID
         }
-
-        fn get_value(&self) -> i32 {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: i32) {
-            self.value = value;
-        }
     }
 
-    pub struct AttrWYtd {
-        value: f64,
-    }
-
-    impl AttrWYtd {}
-
-    impl AttrBinary for AttrWYtd {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: f64 = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrWYtd {}
 
     impl AttrValue<f64> for AttrWYtd {
-        fn new(datum: f64) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_WAREHOUSE
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_W_YTD
         }
-
-        fn get_value(&self) -> f64 {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: f64) {
-            self.value = value;
-        }
     }
 
-    pub struct AttrWTax {
-        value: f64,
-    }
-
-    impl AttrWTax {}
-
-    impl AttrBinary for AttrWTax {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: f64 = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrWTax {}
 
     impl AttrValue<f64> for AttrWTax {
-        fn new(datum: f64) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_WAREHOUSE
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_W_TAX
         }
-
-        fn get_value(&self) -> f64 {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: f64) {
-            self.value = value;
-        }
     }
 
-    pub struct AttrWName {
-        value: String,
-    }
-
-    impl AttrWName {}
-
-    impl AttrBinary for AttrWName {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: String = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrWName {}
 
     impl AttrValue<String> for AttrWName {
-        fn new(datum: String) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_WAREHOUSE
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_W_NAME
         }
-
-        fn get_value(&self) -> String {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: String) {
-            self.value = value;
-        }
     }
 
-    pub struct AttrWStreet1 {
-        value: String,
-    }
-
-    impl AttrWStreet1 {}
-
-    impl AttrBinary for AttrWStreet1 {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: String = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrWStreet1 {}
 
     impl AttrValue<String> for AttrWStreet1 {
-        fn new(datum: String) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_WAREHOUSE
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_W_STREET_1
         }
-
-        fn get_value(&self) -> String {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: String) {
-            self.value = value;
-        }
     }
 
-    pub struct AttrWStreet2 {
-        value: String,
-    }
-
-    impl AttrWStreet2 {}
-
-    impl AttrBinary for AttrWStreet2 {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: String = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrWStreet2 {}
 
     impl AttrValue<String> for AttrWStreet2 {
-        fn new(datum: String) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_WAREHOUSE
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_W_STREET_2
         }
-
-        fn get_value(&self) -> String {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: String) {
-            self.value = value;
-        }
     }
 
-    pub struct AttrWCity {
-        value: String,
-    }
-
-    impl AttrWCity {}
-
-    impl AttrBinary for AttrWCity {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: String = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrWCity {}
 
     impl AttrValue<String> for AttrWCity {
-        fn new(datum: String) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_WAREHOUSE
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_W_CITY
         }
-
-        fn get_value(&self) -> String {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: String) {
-            self.value = value;
-        }
     }
 
-    pub struct AttrWState {
-        value: String,
-    }
-
-    impl AttrWState {}
-
-    impl AttrBinary for AttrWState {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: String = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrWState {}
 
     impl AttrValue<String> for AttrWState {
-        fn new(datum: String) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_WAREHOUSE
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_W_STATE
         }
-
-        fn get_value(&self) -> String {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: String) {
-            self.value = value;
-        }
     }
 
-    pub struct AttrWZip {
-        value: String,
-    }
-
-    impl AttrWZip {}
-
-    impl AttrBinary for AttrWZip {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: String = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrWZip {}
 
     impl AttrValue<String> for AttrWZip {
-        fn new(datum: String) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_WAREHOUSE
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_W_ZIP
-        }
-
-        fn get_value(&self) -> String {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: String) {
-            self.value = value;
         }
     }
 } // end mod object

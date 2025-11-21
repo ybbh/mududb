@@ -1,9 +1,10 @@
 use crate::server::session::{DummyAuthSource, Session};
 use crate::x_engine::thd_ctx::ThdCtx;
 use pgwire::api::auth::md5pass::Md5PasswordAuthStartupHandler;
-use pgwire::api::auth::DefaultServerParameterProvider;
-use pgwire::api::copy::NoopCopyHandler;
-use pgwire::api::{NoopErrorHandler, PgWireServerHandlers};
+use pgwire::api::auth::{DefaultServerParameterProvider, StartupHandler};
+use pgwire::api::copy::CopyHandler;
+use pgwire::api::query::{ExtendedQueryHandler, SimpleQueryHandler};
+use pgwire::api::{ErrorHandler, NoopHandler, PgWireServerHandlers};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -18,33 +19,26 @@ impl SessionMgr {
 }
 
 impl PgWireServerHandlers for SessionMgr {
-    type StartupHandler =
-    Md5PasswordAuthStartupHandler<DummyAuthSource, DefaultServerParameterProvider>;
-    type SimpleQueryHandler = Session;
-    type ExtendedQueryHandler = Session;
-    type CopyHandler = NoopCopyHandler;
-    type ErrorHandler = NoopErrorHandler;
-
-    fn simple_query_handler(&self) -> Arc<Self::SimpleQueryHandler> {
+    fn simple_query_handler(&self) -> Arc<impl SimpleQueryHandler> {
         Arc::new(Session::new(self.ctx.clone()))
     }
 
-    fn extended_query_handler(&self) -> Arc<Self::ExtendedQueryHandler> {
+    fn extended_query_handler(&self) -> Arc<impl ExtendedQueryHandler> {
         Arc::new(Session::new(self.ctx.clone()))
     }
 
-    fn startup_handler(&self) -> Arc<Self::StartupHandler> {
+    fn startup_handler(&self) -> Arc<impl StartupHandler> {
         Arc::new(Md5PasswordAuthStartupHandler::new(
             Arc::new(DummyAuthSource),
             Arc::new(DefaultServerParameterProvider::default()),
         ))
     }
 
-    fn copy_handler(&self) -> Arc<Self::CopyHandler> {
-        Arc::new(NoopCopyHandler)
+    fn copy_handler(&self) -> Arc<impl CopyHandler> {
+        Arc::new(NoopHandler)
     }
 
-    fn error_handler(&self) -> Arc<Self::ErrorHandler> {
-        Arc::new(NoopErrorHandler)
+    fn error_handler(&self) -> Arc<impl ErrorHandler> {
+        Arc::new(NoopHandler)
     }
 }

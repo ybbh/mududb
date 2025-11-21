@@ -5,7 +5,6 @@ use byteorder::ByteOrder;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-
 #[derive(Debug, Clone)]
 pub enum DecErr {
     CapacityNotAvailable,

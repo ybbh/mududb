@@ -2,7 +2,7 @@ CREATE TABLE users
 (
     user_id    INT,
     name       VARCHAR(100),
-    phone      VARCHAR(20) ,
+    phone      VARCHAR(20),
     email      VARCHAR(100),
     password   VARCHAR(255),
     created_at INT,
@@ -13,8 +13,8 @@ CREATE TABLE users
 
 CREATE TABLE wallets
 (
-    user_id INT PRIMARY KEY,
-    balance INT,
+    user_id    INT PRIMARY KEY,
+    balance    INT,
     updated_at INT
 );
 

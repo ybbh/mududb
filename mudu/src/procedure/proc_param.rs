@@ -1,6 +1,6 @@
 use crate::common::result::RS;
 use crate::common::xid::XID;
-use crate::tuple::datum::DatumDyn;
+use crate::data_type::datum::DatumDyn;
 use crate::tuple::datum_vec::datum_vec_to_bin_vec;
 use crate::tuple::rs_tuple_datum::RsTupleDatum;
 use crate::tuple::tuple_field_desc::TupleFieldDesc;

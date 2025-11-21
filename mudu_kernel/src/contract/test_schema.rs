@@ -17,8 +17,8 @@ pub mod _fuzz {
         }
 
         for s in vec.iter() {
-            let (key_desc, key_mapping) = s.key_tuple_desc();
-            let (value_desc, value_mapping) = s.value_tuple_desc();
+            let (key_desc, key_mapping) = s.key_tuple_desc().unwrap();
+            let (value_desc, value_mapping) = s.value_tuple_desc().unwrap();
             let key_columns = s.key_columns();
             let value_columns = s.value_columns();
             for (_i, (columns, desc, mapping)) in vec![
@@ -42,7 +42,7 @@ pub mod _fuzz {
                     assert_eq!(sc.type_id(), fd.data_type());
                     assert_eq!(sc.get_name(), field_info.name());
                 }
-                let (value_desc, value_mapping) = s.value_tuple_desc();
+                let (value_desc, value_mapping) = s.value_tuple_desc().unwrap();
                 assert_eq!(value_desc.field_count(), value_mapping.len());
             }
         }

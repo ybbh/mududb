@@ -3,7 +3,7 @@ use crate::contract::schema_column::SchemaColumn;
 #[cfg(any(test, feature = "test"))]
 use arbitrary::{Arbitrary, Unstructured};
 use mudu::common::id::{gen_oid, OID};
-use mudu::data_type::type_desc::TypeDesc;
+use mudu::common::result::RS;
 use mudu::tuple::tuple_binary_desc::TupleBinaryDesc as TupleDesc;
 use serde::{Deserialize, Serialize};
 #[cfg(any(test, feature = "test"))]
@@ -18,30 +18,27 @@ pub struct SchemaTable {
     value_columns: Vec<SchemaColumn>,
 }
 
-pub fn schema_columns_to_tuple_desc(fields: &[SchemaColumn]) -> (TupleDesc, Vec<FieldInfo>) {
-    let desc: Vec<(TypeDesc, FieldInfo)> = fields
-        .iter()
-        .enumerate()
-        .map(|(index, c)| {
-            let td = TypeDesc::new(c.type_id(), c.type_param().clone());
-            let field_info = FieldInfo::new(
-                c.get_name().clone(),
-                c.get_oid(),
-                td.clone(),
-                index,
-                c.is_primary(),
-            );
-            (td, field_info)
-        })
-        .collect();
+pub fn schema_columns_to_tuple_desc(fields: &[SchemaColumn]) -> RS<(TupleDesc, Vec<FieldInfo>)> {
+    let mut desc = Vec::with_capacity(fields.len());
+    for (i, sc) in fields.iter().enumerate() {
+        let ty = sc.type_param().to_dat_type()?;
+        let field_info = FieldInfo::new(
+            sc.get_name().clone(),
+            sc.get_oid(),
+            ty.clone(),
+            i,
+            sc.is_primary(),
+        );
+        desc.push((ty, field_info))
+    }
 
     assert_eq!(desc.len(), fields.len());
-    let (vec_tuple_desc, mut vec_payload) = TupleDesc::normalized_type_desc_vec(desc);
+    let (vec_tuple_desc, mut vec_payload) = TupleDesc::normalized_type_desc_vec(desc)?;
     for (i, f) in vec_payload.iter_mut().enumerate() {
         f.set_datum_index(i);
     }
-    let tuple_desc = TupleDesc::from(vec_tuple_desc);
-    (tuple_desc, vec_payload)
+    let tuple_desc = TupleDesc::from(vec_tuple_desc)?;
+    Ok((tuple_desc, vec_payload))
 }
 
 #[cfg(any(test, feature = "test"))]
@@ -106,11 +103,11 @@ impl SchemaTable {
         &self.value_columns
     }
 
-    pub fn key_tuple_desc(&self) -> (TupleDesc, Vec<FieldInfo>) {
+    pub fn key_tuple_desc(&self) -> RS<(TupleDesc, Vec<FieldInfo>)> {
         schema_columns_to_tuple_desc(&self.key_columns)
     }
 
-    pub fn value_tuple_desc(&self) -> (TupleDesc, Vec<FieldInfo>) {
+    pub fn value_tuple_desc(&self) -> RS<(TupleDesc, Vec<FieldInfo>)> {
         schema_columns_to_tuple_desc(&self.value_columns)
     }
 }

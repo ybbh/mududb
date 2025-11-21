@@ -137,9 +137,9 @@ fn parse_arguments() -> Result<PackageConfig> {
     let config = PackageConfig {
         app_config_path: app_cfg_file,
         procedure_desc_path: PathBuf::from(matches.get_one::<String>("procedure-desc")
-            .ok_or_else(||anyhow!("No procedure-desc specified"))?),
+            .ok_or_else(|| anyhow!("No procedure-desc specified"))?),
         ddl_sql_path: PathBuf::from(matches.get_one::<String>("ddl-sql")
-            .ok_or_else(||anyhow!("No ddl-sql specified"))?),
+            .ok_or_else(|| anyhow!("No ddl-sql specified"))?),
         initdb_sql_path: PathBuf::from(matches.get_one::<String>("initdb-sql")
             .ok_or_else(|| anyhow!("No initdb-sql specified"))?),
         wasm_files: bytecode_files,

@@ -126,9 +126,8 @@ fn fuzz_row_for_schema<'a>(
 fn arb_string<'a>(c: &SchemaColumn, u: &mut Unstructured<'a>) -> arbitrary::Result<String> {
     let dt = c.type_id();
     let f = dt.fn_arb_printable();
-
-    let param = c.type_param().to_object();
-    let s = f(u, &param)?;
+    let dat_type = c.type_param().to_dat_type().unwrap();
+    let s = f(u, &dat_type)?;
     Ok(s)
 }
 

@@ -1,23 +1,14 @@
-pub use crate::data_type::param_obj::ParamObj;
-use std::fmt;
+use crate::common::cmp_order::Order;
+use crate::common::result::RS;
+use std::any::Any;
+use std::fmt::Debug;
 
-#[derive(Debug)]
-pub enum ErrParam {
-    ParamParseError(String),
-}
-#[derive(Clone, Debug)]
-pub struct FnParam {
-    pub input: FnParamIn,
-    pub default: FnParamDefault,
-}
+pub trait DTPDyn: Debug + Any + Send + Sync {
+    fn clone_boxed(&self) -> Box<dyn DTPDyn>;
 
-pub type FnParamIn = fn(params: &Vec<String>) -> Result<ParamObj, ErrParam>;
+    fn de_from_json(&mut self, json: &str) -> RS<()>;
 
-pub type FnParamDefault = fn() -> ParamObj;
-
-impl fmt::Display for FnParam {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_fmt(format_args!("{:?}", self))
-    }
+    fn se_to_json(&self) -> RS<String>;
 }
 
+pub trait DTPStatic: DTPDyn + Order + 'static {}

@@ -3,7 +3,6 @@ pub mod inner;
 #[cfg(target_arch = "wasm32")]
 
 pub mod sys_call;
-#[cfg(target_arch = "wasm32")]
 
 pub mod api;
 

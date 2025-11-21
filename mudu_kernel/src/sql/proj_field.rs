@@ -1,16 +1,16 @@
 use mudu::common::id::OID;
-use mudu::data_type::type_desc::TypeDesc;
+use mudu::data_type::dat_type::DatType;
 
 #[derive(Debug, Clone)]
 pub struct ProjField {
     oid: OID,
     index: usize,
     name: String,
-    type_desc: TypeDesc,
+    type_desc: DatType,
 }
 
 impl ProjField {
-    pub fn new(index: usize, oid: OID, name: String, type_desc: TypeDesc) -> Self {
+    pub fn new(index: usize, oid: OID, name: String, type_desc: DatType) -> Self {
         Self {
             oid,
             index,
@@ -26,7 +26,7 @@ impl ProjField {
         &self.name
     }
 
-    pub fn type_desc(&self) -> &TypeDesc {
+    pub fn type_desc(&self) -> &DatType {
         &self.type_desc
     }
 }

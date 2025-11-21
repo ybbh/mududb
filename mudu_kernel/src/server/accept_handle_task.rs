@@ -1,19 +1,20 @@
-use crate::contract::a_task::ATask;
 use crate::server::incoming_session::{IncomingSession, SSPSender};
 use mudu::common::result::RS;
 use mudu::error::ec::EC as ER;
 use mudu::m_error;
-use mudu_utils::notifier::Notifier;
+use mudu_utils::notifier::NotifyWait;
+use mudu_utils::sync::a_task::ATask;
 use std::net::SocketAddr;
+use async_trait::async_trait;
 use tokio::net::TcpListener;
 use tracing::info;
 
 impl AcceptHandleTask {
     pub fn new(
-        canceller: Notifier,
+        canceller: NotifyWait,
         bind_addr: SocketAddr,
         ssp_sender_channel: Vec<SSPSender>,
-        wait_recovery: Notifier,
+        wait_recovery: NotifyWait,
     ) -> Self {
         Self {
             canceller,
@@ -50,15 +51,16 @@ impl AcceptHandleTask {
 }
 
 pub struct AcceptHandleTask {
-    canceller: Notifier,
+    canceller: NotifyWait,
     name: String,
     bind_addr: SocketAddr,
     ssp_sender_channel: Vec<SSPSender>,
-    wait_recovery: Notifier,
+    wait_recovery: NotifyWait,
 }
 
+#[async_trait]
 impl ATask for AcceptHandleTask {
-    fn notifier(&self) -> Notifier {
+    fn notifier(&self) -> NotifyWait {
         self.canceller.clone()
     }
 

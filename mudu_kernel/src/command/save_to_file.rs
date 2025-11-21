@@ -1,8 +1,8 @@
 use crate::contract::cmd_exec::CmdExec;
-use crate::sync::a_mutex::AMutex;
 use async_trait::async_trait;
 use mudu::common::id::OID;
 use mudu::common::result::RS;
+use mudu_utils::sync::a_mutex::AMutex;
 
 pub struct SaveToFile {
     inner: AMutex<_SaveToFile>,

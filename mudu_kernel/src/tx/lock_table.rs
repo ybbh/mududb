@@ -1,6 +1,5 @@
 use crate::collection::hash_map::hash_map_get_or_create;
 use crate::contract::x_lock_mgr::LockResult;
-use crate::sync::notify_wait::Notify;
 use crate::tx::lock_slot::LockSlot;
 use mudu::common::buf::Buf;
 use mudu::common::result::RS;
@@ -9,6 +8,7 @@ use mudu::error::ec::EC as ER;
 use mudu::m_error;
 use mudu::tuple::tuple_binary_desc::TupleBinaryDesc as TupleDesc;
 use mudu::tuple::tuple_key::TupleKey;
+use mudu_utils::sync::notify_wait::Notify;
 use scc::HashMap;
 use std::sync::Arc;
 

@@ -4,11 +4,14 @@ use mudu::procedure::proc_param::ProcParam;
 use mudu::procedure::proc_result::ProcResult;
 use mudu_utils::task_id::TaskID;
 use std::sync::Arc;
+use mudu::database::db_conn::DBConn;
 
 pub trait AppInst: Send + Sync {
     fn task_create(&self) -> RS<TaskID>;
 
     fn task_end(&self, task_id: TaskID) -> RS<()>;
+
+    fn connection(&self, task_id: TaskID) -> Option<Arc<dyn DBConn>>;
 
     fn procedure(&self) -> RS<Vec<(String, String)>>;
 

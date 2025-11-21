@@ -1,8 +1,8 @@
 use crate::common::result::RS;
+use crate::data_type::dat_binary::DatBinary;
+use crate::data_type::datum::DatumDyn;
 use crate::error::ec::EC;
 use crate::m_error;
-use crate::tuple::dat_binary::DatBinary;
-use crate::tuple::datum::DatumDyn;
 use crate::tuple::datum_desc::DatumDesc;
 
 fn datum_vec_to<T, F: Fn(&dyn DatumDyn, &DatumDesc) -> RS<T>>(
@@ -32,7 +32,7 @@ fn datum_vec_to<T, F: Fn(&dyn DatumDyn, &DatumDesc) -> RS<T>>(
 pub fn datum_vec_to_bin_vec(param: &[&dyn DatumDyn], desc: &[DatumDesc]) -> RS<Vec<Vec<u8>>> {
     let f = |datum: &dyn DatumDyn, datum_desc: &DatumDesc| {
         let dat: DatBinary = datum
-            .to_binary(datum_desc.dat_type().param())
+            .to_binary(datum_desc.dat_type())
             .map_err(|e| m_error!(EC::MuduError, format!("{:?} to binary error", datum), e))?;
         Ok(dat.into() as Vec<u8>)
     };

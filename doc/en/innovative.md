@@ -1,4 +1,3 @@
-
 ### 1. AI-Assisted Database Engineering
 
 Accelerates development cycles by using large language models (LLMs) to generate:
@@ -7,7 +6,7 @@ Accelerates development cycles by using large language models (LLMs) to generate
 - **Data Definition Language (DDL) Scripts**
 - **Stored Procedures & Functions**
 
-### 2. [Mudu Procedure](doc/en/procedure.md)
+### 2. [Mudu Portable Data Access](procedure.md)
 
 Seamlessly integrates:
 

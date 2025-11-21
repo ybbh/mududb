@@ -1,8 +1,8 @@
 #[cfg(any(test, feature = "test"))]
 use arbitrary::{Arbitrary, Unstructured};
 use mudu::common::id::{gen_oid, OID};
-use mudu::data_type::dt_impl::dat_type_id::DatTypeID as TypeID;
-use mudu::data_type::param_info::ParamInfo;
+use mudu::data_type::dat_type_id::DatTypeID as TypeID;
+use mudu::data_type::dt_info::DTInfo;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -10,13 +10,13 @@ pub struct SchemaColumn {
     oid: OID,
     name: String,
     type_id: TypeID,
-    type_param: ParamInfo,
+    type_param: DTInfo,
     index: u32,
     is_primary: bool,
 }
 
 impl SchemaColumn {
-    pub fn new(name: String, data_type: TypeID, type_param: ParamInfo) -> Self {
+    pub fn new(name: String, data_type: TypeID, type_param: DTInfo) -> Self {
         Self {
             oid: gen_oid(),
             name,
@@ -60,7 +60,7 @@ impl SchemaColumn {
         self.type_id().is_fixed_len()
     }
 
-    pub fn type_param(&self) -> &ParamInfo {
+    pub fn type_param(&self) -> &DTInfo {
         &self.type_param
     }
 }
@@ -73,7 +73,7 @@ impl<'a> Arbitrary<'a> for SchemaColumn {
         let data_type = TypeID::arbitrary(u)?;
         let fn_arbitrary = data_type.fn_arb_param();
         let param = fn_arbitrary(u)?;
-        let schema = Self::new(name, data_type, ParamInfo::from_opt_object(&param));
+        let schema = Self::new(name, data_type, DTInfo::from_opt_object(&param));
         Ok(schema)
     }
 }

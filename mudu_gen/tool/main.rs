@@ -31,6 +31,13 @@ fn gen_for_ddl_sql<P: AsRef<Path>>(
     lang: Language,
 ) -> RS<()> {
     let out_path_buf = output_dir_path.as_ref().to_path_buf();
+    if !out_path_buf.exists() {
+        fs::create_dir_all(&out_path_buf)
+            .unwrap_or_else(|_| panic!("Unable to create output directory {:?}", &out_path_buf));
+    }
+    if !out_path_buf.is_dir() {
+        panic!("Output directory {:?} is not a directory", &out_path_buf);
+    }
     let sql_text = read_to_string(input_ddl_path)
         .map_err(|e| m_error!(EC::IOErr, "open DDL SQL file error", e))?;
     let ml_parser = DDLParser::new();

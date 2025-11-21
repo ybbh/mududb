@@ -1,4 +1,5 @@
 use crate::db_libsql::ls_async_conn::LSSyncConn;
+use libsql::Connection;
 use mudu::common::result::RS;
 use mudu::common::xid::XID;
 use mudu::database::db_conn::DBConn;
@@ -6,6 +7,7 @@ use mudu::database::result_set::ResultSet;
 use mudu::database::sql_params::SQLParams;
 use mudu::database::sql_stmt::SQLStmt;
 use mudu::tuple::tuple_field_desc::TupleFieldDesc;
+use std::any::Any;
 use std::sync::Arc;
 
 pub fn create_ls_conn(
@@ -18,6 +20,14 @@ pub fn create_ls_conn(
 
 struct LSConn {
     inner: Arc<LSSyncConn>,
+}
+
+pub fn db_conn_get_libsql_connection(conn:Arc<dyn DBConn>) -> Option<Connection> {
+    let inner = conn.as_ref() as &dyn Any;
+    let opt_ls_conn = inner.downcast_ref::<LSConn>();
+    opt_ls_conn.map(|ls_conn| {
+        ls_conn.inner.libsql_connection()
+    })
 }
 
 impl LSConn {
@@ -66,14 +76,16 @@ unsafe impl Sync for LSConn {}
 #[cfg(test)]
 mod test {
     use crate::db_libsql::ls_conn::create_ls_conn;
-    use libsql::{Connection, params};
+    use libsql::{params, Connection};
     use mudu::common::result::RS;
     use mudu::common::xid::XID;
     use mudu::database::db_conn::DBConn;
     use mudu::this_file;
     use mudu_utils::log::log_setup;
-    use mudu_utils::notifier::Notifier;
+    use mudu_utils::notifier::NotifyWait;
     use mudu_utils::task::spawn_task;
+    use std::env::temp_dir;
+    use std::fs;
     use std::fs::File;
     use std::io::{BufRead, BufReader};
     use std::path::{Path, PathBuf};
@@ -81,13 +93,21 @@ mod test {
     use tokio::runtime::Builder;
     use tracing::info;
 
-    fn test_db_folder() -> String {
+    fn test_db_temp_folder() -> String {
+        let folder = temp_dir();
+        let path2 = folder.join("test_db");
+        if !path2.exists() {
+            fs::create_dir_all(&path2).unwrap();
+        }
+        path2.to_str().unwrap().to_string()
+    }
+
+    fn test_db_sql_folder() -> String {
         let file = this_file!();
         let path1 = PathBuf::from(file);
         let path2 = path1.parent().unwrap().join("test_db");
         path2.to_str().unwrap().to_string()
     }
-
     async fn execute_sql_file<P: AsRef<Path>>(
         conn: &Connection,
         path: P,
@@ -143,12 +163,11 @@ mod test {
     }
 
     async fn prepare_test_db() {
-        let folder = test_db_folder();
-        let db_path = db_file(&folder);
+        let db_path = db_file(&test_db_temp_folder());
         let db = libsql::Builder::new_local(db_path).build().await.unwrap();
 
         let conn = db.connect().unwrap();
-        let sql_path = sql_file(&folder);
+        let sql_path = sql_file(&test_db_sql_folder());
         execute_sql_file(&conn, sql_path).await.unwrap();
     }
     #[test]
@@ -158,19 +177,18 @@ mod test {
 
         let conn_max = 1;
         builder.block_on(async move {
-            let notifier = Notifier::new();
+            let notifier = NotifyWait::new();
             prepare_test_db().await;
-            let folder = test_db_folder();
             let mut join = vec![];
             {
-                let db_path = folder.clone();
-                let ddl_path = folder.clone();
+                let db_path = test_db_temp_folder();
+                let ddl_path = test_db_sql_folder();
                 let j = spawn_task(notifier.clone(), &"task_0".to_string(), async move {
                     handle_conn(0, conn_max, APP_NAME.to_string(), db_path, ddl_path)
                         .await
                         .unwrap();
                 })
-                .unwrap();
+                    .unwrap();
                 join.push(j);
             }
             for j in join {

@@ -1,4 +1,5 @@
-use crate::data_type::{dat_type::DatType, dt_impl::dat_type_id::DatTypeID, param_obj::ParamObj};
+use crate::data_type::dat_type::DatType;
+use crate::data_type::dat_type_id::DatTypeID;
 use serde::{Deserialize, Serialize};
 
 /// Describes a data element with type information and name
@@ -10,9 +11,9 @@ pub struct DatumDesc {
 
 impl DatumDesc {
     /// Creates a new DatumDesc with the given name and type declaration
-    pub fn new(name: String, type_declare: DatType) -> Self {
+    pub fn new(name: String, dat_type: DatType) -> Self {
         Self {
-            dat_type: type_declare,
+            dat_type,
             name,
         }
     }
@@ -24,20 +25,13 @@ impl DatumDesc {
         &self.name
     }
 
-    /// Returns the type declaration
+    /// Returns the data type
     pub fn dat_type(&self) -> &DatType {
         &self.dat_type
     }
 
-    // -- Type information accessors --
-
-    /// Returns the parameter object for the data type
-    pub fn param_obj(&self) -> &ParamObj {
-        self.dat_type.param()
-    }
-
     /// Returns the specific type identifier
     pub fn dat_type_id(&self) -> DatTypeID {
-        self.dat_type.param().dat_type_id()
+        self.dat_type.dat_type_id()
     }
 }

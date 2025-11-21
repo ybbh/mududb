@@ -1,4 +1,4 @@
-use crate::contract::a_task::ATask;
+use async_trait::async_trait;
 use crate::contract::lsn::LSN;
 use crate::x_log::lsn_syncer::LSNSyncer;
 use crate::x_log::x_log_file::XLogFile;
@@ -9,7 +9,8 @@ use crate::x_log::xl_file_info::XLFileInfo;
 use crate::x_log::xl_path::xl_file_path;
 use mudu::common::buf::Buf;
 use mudu::common::result::RS;
-use mudu_utils::notifier::Notifier;
+use mudu_utils::notifier::NotifyWait;
+use mudu_utils::sync::a_task::ATask;
 use mudu_utils::task_trace;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::oneshot;
@@ -54,7 +55,7 @@ async fn sync_io(
 
 impl FsyncTask {
     pub fn new(
-        canceller: Notifier,
+        canceller: NotifyWait,
         name: String,
         x_log_file: XLogFileReceiver,
         receiver: Receiver<(Buf, LSN)>,
@@ -70,8 +71,9 @@ impl FsyncTask {
     }
 }
 
+#[async_trait]
 impl ATask for FsyncTask {
-    fn notifier(&self) -> Notifier {
+    fn notifier(&self) -> NotifyWait {
         self.canceller.clone()
     }
 
@@ -118,7 +120,7 @@ impl FsyncTask {
 }
 
 pub struct FsyncTask {
-    canceller: Notifier,
+    canceller: NotifyWait,
     name: String,
     file_receiver: XLogFileReceiver,
     log_receiver: Receiver<(Buf, LSN)>,

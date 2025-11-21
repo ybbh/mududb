@@ -1,11 +1,22 @@
-use crate::service::app_inst::AppInst;
 use mudu::common::result::RS;
-use std::sync::Arc;
+use mudu_utils::sync::async_task::TaskWrapper;
+use crate::service::service_trait::ServiceTrait;
+use crate::service::service_impl::ServiceImpl;
 
-pub trait Service: Send + Sync {
-    fn list(&self) -> Vec<String>;
+pub struct Service {
+    service: ServiceImpl,
+}
 
-    fn app(&self, app_name: &String) -> Option<Arc<dyn AppInst>>;
+impl Service {
+    pub fn new() -> Self {
+        Self { service:ServiceImpl::new() }
+    }
 
-    fn install(&self, pkg_path: &String) -> RS<()>;
+    pub fn register(&self, task:TaskWrapper) -> RS<()> {
+        self.service.register(task)
+    }
+
+    pub fn serve(self) -> RS<()> {
+        self.service.serve()
+    }
 }

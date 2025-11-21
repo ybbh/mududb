@@ -1,20 +1,21 @@
-use crate::contract::a_task::ATask;
+use async_trait::async_trait;
 use crate::server::incoming_session::SSPReceiver;
 use crate::x_engine::thd_ctx::ThdCtx;
 use mudu::common::result::RS;
-use mudu_utils::notifier::Notifier;
+use mudu_utils::notifier::NotifyWait;
+use mudu_utils::sync::a_task::ATask;
 use mudu_utils::task::spawn_local_task;
 use tracing::error;
 
 pub struct SessionHandleTask {
     thd_ctx: ThdCtx,
     name: String,
-    canceller: Notifier,
+    canceller: NotifyWait,
     receiver: SSPReceiver,
 }
 
 impl SessionHandleTask {
-    pub fn new(thd_ctx: ThdCtx, name: String, receiver: SSPReceiver, canceller: Notifier) -> Self {
+    pub fn new(thd_ctx: ThdCtx, name: String, receiver: SSPReceiver, canceller: NotifyWait) -> Self {
         Self {
             thd_ctx,
             name,
@@ -50,9 +51,9 @@ impl SessionHandleTask {
         Ok(())
     }
 }
-
+#[async_trait]
 impl ATask for SessionHandleTask {
-    fn notifier(&self) -> Notifier {
+    fn notifier(&self) -> NotifyWait {
         self.canceller.clone()
     }
     fn name(&self) -> String {

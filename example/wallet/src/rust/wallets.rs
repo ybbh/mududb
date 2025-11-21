@@ -1,13 +1,18 @@
 pub mod object {
+
     use lazy_static::lazy_static;
     use mudu::common::result::RS;
-    use mudu::database::attr_binary::AttrBinary;
-    use mudu::database::attr_set_get::{attr_get_binary, attr_set_binary};
+    use mudu::data_type::dat_binary::DatBinary;
+    use mudu::data_type::dat_textual::DatTextual;
+    use mudu::data_type::dat_type::DatType;
+    use mudu::data_type::dat_type_id::DatTypeID;
+    use mudu::data_type::dat_value::DatValue;
+    use mudu::data_type::datum::{Datum, DatumDyn};
+    use mudu::database::attr_field_access;
     use mudu::database::attr_value::AttrValue;
-    use mudu::database::record::Record;
-    use mudu::database::record_convert_tuple::{record_from_tuple, record_to_tuple};
-    use mudu::tuple::datum_convert::{datum_from_binary, datum_to_binary};
-    use mudu::tuple::tuple_field::TupleField;
+    use mudu::database::entity::Entity;
+    use mudu::database::entity_utils;
+    use mudu::tuple::datum_desc::DatumDesc;
     use mudu::tuple::tuple_field_desc::TupleFieldDesc;
 
     const TABLE_WALLETS: &str = "wallets";
@@ -15,48 +20,92 @@ pub mod object {
     const COLUMN_BALANCE: &str = "balance";
     const COLUMN_UPDATED_AT: &str = "updated_at";
 
+    #[derive(Debug, Clone)]
     pub struct Wallets {
-        user_id: Option<AttrUserId>,
-        balance: Option<AttrBalance>,
-        updated_at: Option<AttrUpdatedAt>,
+        user_id: Option<i32>,
+        balance: Option<i32>,
+        updated_at: Option<i32>,
     }
 
     impl Wallets {
-        pub fn new(user_id: AttrUserId, balance: AttrBalance, updated_at: AttrUpdatedAt) -> Self {
+        pub fn new(user_id: Option<i32>, balance: Option<i32>, updated_at: Option<i32>) -> Self {
             let s = Self {
-                user_id: Some(user_id),
-                balance: Some(balance),
-                updated_at: Some(updated_at),
+                user_id,
+                balance,
+                updated_at,
             };
             s
         }
 
-        pub fn set_user_id(&mut self, user_id: AttrUserId) {
+        pub fn set_user_id(&mut self, user_id: i32) {
             self.user_id = Some(user_id);
         }
 
-        pub fn get_user_id(&self) -> &Option<AttrUserId> {
+        pub fn get_user_id(&self) -> &Option<i32> {
             &self.user_id
         }
 
-        pub fn set_balance(&mut self, balance: AttrBalance) {
+        pub fn set_balance(&mut self, balance: i32) {
             self.balance = Some(balance);
         }
 
-        pub fn get_balance(&self) -> &Option<AttrBalance> {
+        pub fn get_balance(&self) -> &Option<i32> {
             &self.balance
         }
 
-        pub fn set_updated_at(&mut self, updated_at: AttrUpdatedAt) {
+        pub fn set_updated_at(&mut self, updated_at: i32) {
             self.updated_at = Some(updated_at);
         }
 
-        pub fn get_updated_at(&self) -> &Option<AttrUpdatedAt> {
+        pub fn get_updated_at(&self) -> &Option<i32> {
             &self.updated_at
         }
     }
 
-    impl Record for Wallets {
+    impl Datum for Wallets {
+        fn dat_type() -> &'static DatType {
+            lazy_static! {
+                static ref DAT_TYPE: DatType = entity_utils::entity_dat_type::<Wallets>();
+            }
+            &DAT_TYPE
+        }
+
+        fn from_binary(binary: &[u8]) -> RS<Self> {
+            entity_utils::entity_from_binary(binary)
+        }
+
+        fn from_value(value: &DatValue) -> RS<Self> {
+            entity_utils::entity_from_value(value)
+        }
+
+        fn from_textual(textual: &str) -> RS<Self> {
+            entity_utils::entity_from_textual(textual)
+        }
+    }
+
+    impl DatumDyn for Wallets {
+        fn dat_type_id(&self) -> RS<DatTypeID> {
+            entity_utils::entity_dat_type_id()
+        }
+
+        fn to_binary(&self, dat_type: &DatType) -> RS<DatBinary> {
+            entity_utils::entity_to_binary(self, dat_type)
+        }
+
+        fn to_textual(&self, dat_type: &DatType) -> RS<DatTextual> {
+            entity_utils::entity_to_textual(self, dat_type)
+        }
+
+        fn to_value(&self, dat_type: &DatType) -> RS<DatValue> {
+            entity_utils::entity_to_value(self, dat_type)
+        }
+
+        fn clone_boxed(&self) -> Box<dyn DatumDyn> {
+            entity_utils::entity_clone_boxed(self)
+        }
+    }
+
+    impl Entity for Wallets {
         fn new_empty() -> Self {
             let s = Self {
                 user_id: None,
@@ -76,39 +125,62 @@ pub mod object {
             &TUPLE_DESC
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_WALLETS
         }
 
-        fn from_tuple<T: AsRef<TupleField>, D: AsRef<TupleFieldDesc>>(row: T, desc: D) -> RS<Self> {
-            record_from_tuple::<Self, T, D>(row, desc)
-        }
-
-        fn to_tuple<D: AsRef<TupleFieldDesc>>(&self, desc: D) -> RS<TupleField> {
-            record_to_tuple(self, desc)
-        }
-
-        fn get_binary(&self, column: &str) -> RS<Option<Vec<u8>>> {
+        fn get_field_binary(&self, column: &str) -> RS<Option<Vec<u8>>> {
             match column {
-                COLUMN_USER_ID => attr_get_binary(&self.user_id),
-                COLUMN_BALANCE => attr_get_binary(&self.balance),
-                COLUMN_UPDATED_AT => attr_get_binary(&self.updated_at),
+                COLUMN_USER_ID => attr_field_access::attr_get_binary::<_>(&self.user_id),
+                COLUMN_BALANCE => attr_field_access::attr_get_binary::<_>(&self.balance),
+                COLUMN_UPDATED_AT => attr_field_access::attr_get_binary::<_>(&self.updated_at),
                 _ => {
                     panic!("unknown name");
                 }
             }
         }
 
-        fn set_binary<B: AsRef<[u8]>>(&mut self, column: &str, binary: B) -> RS<()> {
+        fn set_field_binary<B: AsRef<[u8]>>(&mut self, column: &str, binary: B) -> RS<()> {
             match column {
                 COLUMN_USER_ID => {
-                    attr_set_binary(&mut self.user_id, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(&mut self.user_id, binary.as_ref())?;
                 }
                 COLUMN_BALANCE => {
-                    attr_set_binary(&mut self.balance, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(&mut self.balance, binary.as_ref())?;
                 }
                 COLUMN_UPDATED_AT => {
-                    attr_set_binary(&mut self.updated_at, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(
+                        &mut self.updated_at,
+                        binary.as_ref(),
+                    )?;
+                }
+                _ => {
+                    panic!("unknown name");
+                }
+            }
+            Ok(())
+        }
+        fn get_field_value(&self, column: &str) -> RS<Option<DatValue>> {
+            match column {
+                COLUMN_USER_ID => attr_field_access::attr_get_value::<_>(&self.user_id),
+                COLUMN_BALANCE => attr_field_access::attr_get_value::<_>(&self.balance),
+                COLUMN_UPDATED_AT => attr_field_access::attr_get_value::<_>(&self.updated_at),
+                _ => {
+                    panic!("unknown name");
+                }
+            }
+        }
+
+        fn set_field_value<B: AsRef<DatValue>>(&mut self, column: &str, value: B) -> RS<()> {
+            match column {
+                COLUMN_USER_ID => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.user_id, value)?;
+                }
+                COLUMN_BALANCE => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.balance, value)?;
+                }
+                COLUMN_UPDATED_AT => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.updated_at, value)?;
                 }
                 _ => {
                     panic!("unknown name");
@@ -118,135 +190,69 @@ pub mod object {
         }
     }
 
-    pub struct AttrUserId {
-        value: i32,
-    }
-
-    impl AttrUserId {}
-
-    impl AttrBinary for AttrUserId {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: i32 = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrUserId {}
 
     impl AttrValue<i32> for AttrUserId {
-        fn new(datum: i32) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_WALLETS
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_USER_ID
         }
-
-        fn get_value(&self) -> i32 {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: i32) {
-            self.value = value;
-        }
     }
 
-    pub struct AttrBalance {
-        value: i32,
-    }
-
-    impl AttrBalance {}
-
-    impl AttrBinary for AttrBalance {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: i32 = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrBalance {}
 
     impl AttrValue<i32> for AttrBalance {
-        fn new(datum: i32) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_WALLETS
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_BALANCE
         }
-
-        fn get_value(&self) -> i32 {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: i32) {
-            self.value = value;
-        }
     }
 
-    pub struct AttrUpdatedAt {
-        value: i32,
-    }
-
-    impl AttrUpdatedAt {}
-
-    impl AttrBinary for AttrUpdatedAt {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: i32 = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrUpdatedAt {}
 
     impl AttrValue<i32> for AttrUpdatedAt {
-        fn new(datum: i32) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_WALLETS
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_UPDATED_AT
-        }
-
-        fn get_value(&self) -> i32 {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: i32) {
-            self.value = value;
         }
     }
 } // end mod object

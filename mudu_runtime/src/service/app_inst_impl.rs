@@ -17,7 +17,7 @@ use mudu::procedure::proc_desc::ProcDesc;
 use mudu::procedure::proc_param::ProcParam;
 use mudu::procedure::proc_result::ProcResult;
 use mudu::utils::app_proc_desc::AppProcDesc;
-use mudu_utils::task_id::{TaskID, new_task_id};
+use mudu_utils::task_id::{new_task_id, TaskID};
 use scc::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
@@ -89,7 +89,7 @@ impl AppInstImplInner {
         let init_sql = package.initdb_sql;
         let schema_mgr = SchemaMgr::from_sql_text(&ddl_sql)?;
         let app_proc_desc: AppProcDesc = package.app_proc_desc;
-        for (mod_name, vec_desc) in app_proc_desc.modules {
+        for (mod_name, vec_desc) in app_proc_desc.into_modules() {
             let byte_code = package.modules.remove(&mod_name).ok_or_else(|| {
                 m_error!(EC::NoneErr, format!("no such module named {}", mod_name))
             })?;
@@ -274,6 +274,10 @@ impl AppInst for AppInstImpl {
 
     fn task_end(&self, task_id: TaskID) -> RS<()> {
         self.remove_conn(task_id)
+    }
+
+    fn connection(&self, task_id: TaskID) -> Option<Arc<dyn DBConn>> {
+        self.inner.connection(task_id)
     }
 
     fn procedure(&self) -> RS<Vec<(String, String)>> {

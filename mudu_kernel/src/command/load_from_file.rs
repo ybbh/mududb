@@ -14,7 +14,6 @@ use mudu::common::result::RS;
 use mudu::error::ec::EC as ER;
 use mudu::m_error;
 use mudu::tuple::build_tuple::build_tuple;
-use mudu::tuple::dat_printable::DatPrintable;
 use mudu::tuple::tuple_binary_desc::TupleBinaryDesc as TupleDesc;
 use std::sync::Arc;
 use tokio::sync::oneshot::channel;
@@ -162,8 +161,8 @@ impl _LoadFromFile {
             };
             let field_desc = &tuple_desc.field_desc()[*i];
             let dat_id = field_desc.data_type();
-            let type_param = field_desc.type_param();
-            let internal = dat_id.fn_input()(&DatPrintable::from(s), type_param)
+            let type_param = field_desc.type_obj();
+            let internal = dat_id.fn_input()(&s, type_param)
                 .map_err(|e| {
                     m_error!(ER::TypeBaseErr, "convert printable to internal error", e)
                 })?;

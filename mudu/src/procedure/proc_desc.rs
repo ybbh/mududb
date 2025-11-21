@@ -1,5 +1,4 @@
 use crate::common::result::RS;
-use crate::data_type::dt_impl::dat_type_id::DatTypeID;
 use crate::error::ec::EC;
 use crate::m_error;
 use crate::tuple::datum_desc::DatumDesc;
@@ -9,6 +8,7 @@ use serde_json::Map;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
+use crate::utils::json::JsonValue;
 
 /// Describes a procedure's interface including parameter and return types
 /// Used for procedure signature validation and serialization
@@ -79,38 +79,28 @@ impl ProcDesc {
     }
 
     /// Generate arbitrary parameter values as JSON map
-    pub fn default_param_json(&self) -> RS<String> {
+    pub fn default_param_json(&self) -> RS<JsonValue> {
         let map = self.generate_default_map(&self.param_desc)?;
-        let s = serde_json::to_string_pretty(&Value::Object(map))
-            .map_err(|e| m_error!(EC::IOErr, "serialize to json error", e))?;
-        Ok(s)
+        Ok(JsonValue::Object(map))
     }
 
     /// Generate arbitrary return values as JSON map
-    pub fn default_return_json(&self) -> RS<String> {
+    pub fn default_return_json(&self) -> RS<JsonValue> {
         let map = self.generate_default_map(&self.return_desc)?;
-        let s = serde_json::to_string_pretty(&map)
-            .map_err(|e| m_error!(EC::IOErr, "serialize to json error", e))?;
-        Ok(s)
+        Ok(JsonValue::Object(map))
     }
 
     /// Generate default value for a specific DatumDesc
     fn generate_default_value(&self, desc: &DatumDesc) -> RS<(String, Value)> {
         // Get the datatype ID and corresponding FnArbitrary functions
-        let param = desc.param_obj();
+        let obj = desc.dat_type();
 
-        let tp_id = param.dat_type_id();
-        let dat_internal = tp_id.fn_default()(param)
+        let tp_id = obj.dat_type_id();
+        let dat_internal = tp_id.fn_default()(obj)
             .map_err(|e| m_error!(EC::TypeBaseErr, "error when generating default value", e))?;
-        let dat_printable = tp_id.fn_output()(&dat_internal, param)
+        let dat_printable = tp_id.fn_output_json()(&dat_internal, obj)
             .map_err(|e| m_error!(EC::TypeBaseErr, "error when converting to printable", e))?;
-        let s = dat_printable.into();
-        let value = if tp_id == DatTypeID::CharFixedLen || tp_id == DatTypeID::CharVarLen {
-            Value::String(s)
-        } else {
-            s.parse()
-                .map_err(|e| m_error!(EC::DecodeErr, "error when generating default value", e))?
-        };
+        let value = dat_printable.into_json_value();
         Ok((desc.name().to_string(), value))
     }
 
@@ -134,8 +124,8 @@ mod test {
     #[test]
     fn test_proc_desc_serialization() {
         // Create parameter and return type descriptions
-        let param_desc = <(i32, i32, i64)>::tuple_desc_static();
-        let return_desc = <(i32, String)>::tuple_desc_static();
+        let param_desc = <(i32, i32, i64)>::tuple_desc_static(&[]);
+        let return_desc = <(i32, String)>::tuple_desc_static(&[]);
 
         // Create procedure description
         let proc_desc = ProcDesc::new(
@@ -154,8 +144,8 @@ mod test {
 
         // Read from file and verify
         let loaded_desc = ProcDesc::from_path(&path).unwrap();
-        println!("parameter:{}", loaded_desc.default_param_json().unwrap());
-        println!("return:{}", loaded_desc.default_return_json().unwrap());
+        println!("parameter:{}", loaded_desc.default_param_json().unwrap().to_string());
+        println!("return:{}", loaded_desc.default_return_json().unwrap().to_string());
         // Clean up test file
         let _ = std::fs::remove_file(&path);
     }

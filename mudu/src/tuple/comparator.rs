@@ -3,11 +3,11 @@ use std::fmt::Debug;
 use std::hash::Hasher;
 
 use crate::common::result::RS;
-use crate::data_type::dt_impl::dat_type_id::DatTypeID;
-use crate::data_type::param_obj::ParamObj;
+use crate::data_type::dat_type::DatType;
+use crate::data_type::dat_type_id::DatTypeID;
+use crate::data_type::dat_value::DatValue;
 use crate::error::ec::EC;
 use crate::m_error;
-use crate::tuple::dat_internal::DatInternal;
 use crate::tuple::read_datum::{read_fixed_len_value, read_var_len_value};
 use crate::tuple::tuple_binary_desc::TupleBinaryDesc;
 
@@ -47,19 +47,19 @@ pub fn tuple_hash(desc: &TupleBinaryDesc, tuple: &[u8], hasher: &mut dyn Hasher)
 fn _tuple_hash(desc: &TupleBinaryDesc, tuple: &[u8], hasher: &mut dyn Hasher) -> RS<()> {
     for fd in desc.fixed_len_field_desc() {
         let value = read_fixed_len_value(fd.slot().offset(), fd.slot().length(), tuple)?;
-        _hash_binary(fd.data_type(), fd.type_param(), value, hasher)?;
+        _hash_binary(fd.data_type(), fd.type_obj(), value, hasher)?;
     }
 
     for fd in desc.var_len_field_desc() {
         let value = read_var_len_value(fd.slot().offset(), tuple)?;
-        _hash_binary(fd.data_type(), fd.type_param(), value, hasher)?;
+        _hash_binary(fd.data_type(), fd.type_obj(), value, hasher)?;
     }
     Ok(())
 }
 
-fn _hash_binary(id: DatTypeID, p: &ParamObj, val: &[u8], hasher: &mut dyn Hasher) -> RS<()> {
+fn _hash_binary(id: DatTypeID, p: &DatType, val: &[u8], hasher: &mut dyn Hasher) -> RS<()> {
     let recv = id.fn_recv();
-    let v_internal =
+    let (v_internal, _size) =
         recv(val, p).map_err(|e| m_error!(EC::TypeBaseErr, "convert data format error", e))?;
     if let Some(h) = id.fn_hash() {
         h(&v_internal, hasher).map_err(|e| m_error!(EC::CompareErr, "hash binary error", e))
@@ -69,11 +69,11 @@ fn _hash_binary(id: DatTypeID, p: &ParamObj, val: &[u8], hasher: &mut dyn Hasher
 }
 
 fn _compare_binary<
-    F: Fn(&DatTypeID, &DatInternal, &DatInternal) -> RS<R> + 'static,
+    F: Fn(&DatTypeID, &DatValue, &DatValue) -> RS<R> + 'static,
     R: Debug + Copy + Clone + 'static,
 >(
     id: DatTypeID,
-    param: &ParamObj,
+    param: &DatType,
     value1: &[u8],
     value2: &[u8],
     compare: &F,
@@ -82,15 +82,15 @@ fn _compare_binary<
     let r1 = recv(value1, param);
     let r2 = recv(value2, param);
     match (r1, r2) {
-        (Ok(v1), Ok(v2)) => compare(&id, &v1, &v2),
+        (Ok((v1, _)), Ok((v2, _))) => compare(&id, &v1, &v2),
         _ => Err(m_error!(EC::TupleErr)),
     }
 }
 
 fn _compare_binary_equal(
     data_type: &DatTypeID,
-    value1: &DatInternal,
-    value2: &DatInternal,
+    value1: &DatValue,
+    value2: &DatValue,
 ) -> RS<bool> {
     let opt_equal = data_type.fn_equal();
     let f = match opt_equal {
@@ -106,8 +106,8 @@ fn _compare_binary_equal(
 
 fn _compare_binary_ordering(
     data_type: &DatTypeID,
-    value1: &DatInternal,
-    value2: &DatInternal,
+    value1: &DatValue,
+    value2: &DatValue,
 ) -> RS<Ordering> {
     let opt_order = data_type.fn_order();
     let f = match opt_order {
@@ -130,11 +130,11 @@ fn _need_return_equal(equal: bool) -> bool {
 }
 
 fn _compare_opt_binary<
-    F: Fn(&DatTypeID, &DatInternal, &DatInternal) -> RS<R> + 'static,
+    F: Fn(&DatTypeID, &DatValue, &DatValue) -> RS<R> + 'static,
     R: Debug + Copy + Clone + 'static,
 >(
     id: DatTypeID,
-    param: &ParamObj,
+    param: &DatType,
     value1: &[u8],
     value2: &[u8],
     compare: &F,
@@ -144,7 +144,7 @@ fn _compare_opt_binary<
 }
 
 fn _iter_value<
-    F: Fn(&DatTypeID, &DatInternal, &DatInternal) -> RS<R> + 'static,
+    F: Fn(&DatTypeID, &DatValue, &DatValue) -> RS<R> + 'static,
     R: Debug + Copy + Clone + 'static,
     T: Fn(R) -> bool + 'static,
 >(
@@ -158,7 +158,7 @@ fn _iter_value<
     for fd in desc.fixed_len_field_desc() {
         let opt1 = read_fixed_len_value(fd.slot().offset(), fd.slot().length(), tuple1)?;
         let opt2 = read_fixed_len_value(fd.slot().offset(), fd.slot().length(), tuple2)?;
-        let ord = _compare_opt_binary(fd.data_type(), fd.type_param(), opt1, opt2, compare)?;
+        let ord = _compare_opt_binary(fd.data_type(), fd.type_obj(), opt1, opt2, compare)?;
         if need_return(ord) {
             return Ok(ord);
         }
@@ -167,7 +167,7 @@ fn _iter_value<
     for fd in desc.var_len_field_desc() {
         let opt1 = read_var_len_value(fd.slot().offset(), tuple1)?;
         let opt2 = read_var_len_value(fd.slot().offset(), tuple2)?;
-        let ord = _compare_opt_binary(fd.data_type(), fd.type_param(), opt1, opt2, compare)?;
+        let ord = _compare_opt_binary(fd.data_type(), fd.type_obj(), opt1, opt2, compare)?;
         if need_return(ord) {
             return Ok(ord);
         }

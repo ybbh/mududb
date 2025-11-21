@@ -1,7 +1,7 @@
 use crate::common::id::OID;
 use crate::common::result::RS;
-use crate::data_type::dt_impl::dat_type_id::DatTypeID;
-use crate::data_type::param_obj::ParamObj;
+use crate::data_type::dat_type::DatType;
+use crate::data_type::dat_type_id::DatTypeID;
 use crate::tuple::read_datum::{read_fixed_len_value, read_var_len_value};
 use crate::tuple::slot::Slot;
 use serde::{Deserialize, Serialize};
@@ -13,8 +13,7 @@ pub struct FieldDesc {
     oid: OID,
     is_fixed_len: bool,
     slot: Slot,
-    data_type: DatTypeID,
-    type_param: ParamObj,
+    type_obj: DatType,
 }
 
 impl FieldDesc {
@@ -26,14 +25,12 @@ impl FieldDesc {
     /// * `is_fixed_len` - Whether the type has fixed-length storage
     /// # Panics
     /// If the data_type's inherent fixed-length property doesn't match is_fixed_len parameter
-    pub fn new(slot: Slot, data_type: DatTypeID, type_param: ParamObj, is_fixed_len: bool) -> Self {
-        assert_eq!(data_type.is_fixed_len(), is_fixed_len);
+    pub fn new(slot: Slot, data_type: DatType, is_fixed_len: bool) -> Self {
         Self {
             oid: 0,
             is_fixed_len,
             slot,
-            data_type,
-            type_param,
+            type_obj: data_type,
         }
     }
 
@@ -65,12 +62,12 @@ impl FieldDesc {
 
     /// Returns the data type identifier
     pub fn data_type(&self) -> DatTypeID {
-        self.data_type
+        self.type_obj.dat_type_id()
     }
 
     /// Returns reference to parameter object of the field's type
-    pub fn type_param(&self) -> &ParamObj {
-        &self.type_param
+    pub fn type_obj(&self) -> &DatType {
+        &self.type_obj
     }
 
     /// Indicates if the field is a fixed-length type

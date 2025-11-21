@@ -2,7 +2,7 @@
 
 MOD_DIR = "wasm"
 
-APP_NAME = "example"
+APP_NAME = "wallet"
 # WASM filename
 WASM_FILE = "${APP_NAME}.wasm"
 
@@ -12,8 +12,8 @@ WASM_DEST_DIR = "${CARGO_MAKE_WORKING_DIRECTORY}/${MOD_DIR}"
 # build setting, default is release
 PROFILE = "release"
 
-APP_CFG = "src/toml/app.cfg.toml"
-PROCEDURE_DESC = "src/toml/procedure.desc.toml"
+APP_CFG = "toml/app.cfg.toml"
+PROCEDURE_DESC = "toml/procedure.desc.toml"
 DDL_SQL = "src/sql/ddl.sql"
 INITDB_SQL = "src/sql/init.sql"
 BYTECODE_FILE = "wasm/${WASM_FILE}"

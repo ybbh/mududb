@@ -21,3 +21,24 @@ pub fn read_u64(buf: &[u8]) -> u64 {
 pub fn read_u32(buf: &[u8]) -> u32 {
     Endian::read_u32(buf)
 }
+
+#[inline]
+pub fn read_f64(buf: &[u8]) -> f64 {
+    Endian::read_f64(buf)
+}
+
+#[inline]
+pub fn write_f64(buf: &mut [u8], n: f64) {
+    Endian::write_f64(buf, n);
+}
+
+#[inline]
+pub fn read_f32(buf: &[u8]) -> f32 {
+    Endian::read_f32(buf)
+}
+
+#[inline]
+pub fn write_f32(buf: &mut [u8], n: f32) {
+    Endian::write_f32(buf, n);
+}
+

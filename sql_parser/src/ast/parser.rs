@@ -3,16 +3,6 @@ use mudu::common::result_of::{rs_of_opt, rs_option};
 use mudu::common::result::RS;
 use mudu::error::ec::EC;
 
-use crate::ts_const::{ts_field_name, ts_kind_id};
-use std::collections::HashMap;
-use std::f64;
-use std::io::Write;
-use std::str::FromStr;
-use std::sync::{Arc, Mutex};
-use substring::Substring;
-use tree_sitter::{Language, Node, Parser};
-use tree_sitter_sql;
-
 use crate::ast::column_def::ColumnDef;
 use crate::ast::expr_arithmetic::ExprArithmetic;
 use crate::ast::expr_compare::ExprCompare;
@@ -33,13 +23,24 @@ use crate::ast::stmt_list::StmtList;
 use crate::ast::stmt_select::StmtSelect;
 use crate::ast::stmt_type::{StmtCommand, StmtType};
 use crate::ast::stmt_update::{AssignedValue, Assignment, StmtUpdate};
-use mudu::data_type::dat_type::DatType;
-use mudu::data_type::dt_impl::dat_type_id::DatTypeID;
-use mudu::data_type::dt_impl::dat_typed::DatTyped;
-use mudu::data_type::dt_param::ParamObj;
-use mudu::data_type::param_info::ParamInfo;
+use crate::ts_const::{ts_field_name, ts_kind_id};
+use mudu::data_type::dat_prim::DatPrim;
+use mudu::data_type::dat_type_id::DatTypeID;
+use mudu::data_type::dat_typed::DatTyped;
+use mudu::data_type::dt_fn_param::DatType;
+use mudu::data_type::dt_info::DTInfo;
+use mudu::data_type::param;
 use mudu::error::err::MError;
 use mudu::m_error;
+use serde_json;
+use std::collections::HashMap;
+use std::f64;
+use std::io::Write;
+use std::str::FromStr;
+use std::sync::{Arc, Mutex};
+use substring::Substring;
+use tree_sitter::{Language, Node, Parser};
+use tree_sitter_sql;
 
 pub struct SQLParser {
     parser: Mutex<Parser>,
@@ -482,14 +483,14 @@ impl SQLParser {
         let typed = if let Some(n) = node.child_by_field_name("integer") {
             let s = self.visit_integer(context, n)?;
             let i = i64::from_str(s.as_str()).unwrap();
-            DatTyped::I64(i)
+            DatTyped::from_i64(i)
         } else if let Some(n) = node.child_by_field_name("decimal") {
             let s = self.visit_decimal(context, n)?;
             let f = f64::from_str(s.as_str()).unwrap();
-            DatTyped::F64(f)
+            DatTyped::from_f64(f)
         } else if let Some(n) = node.child_by_field_name("string") {
             let s = self.visit_string(context, n)?;
-            DatTyped::String(s)
+            DatTyped::from_string(s)
         } else if let Some(_n) = node.child_by_field_name("keyword_true") {
             todo!()
         } else if let Some(_n) = node.child_by_field_name("keyword_false") {
@@ -778,42 +779,38 @@ impl SQLParser {
         Ok(())
     }
 
-    fn visit_data_type(&self, context: &ParseContext, node: Node) -> RS<DatType> {
+    fn visit_data_type(&self, context: &ParseContext, node: Node) -> RS<DatPrim> {
         let opt = node.child_by_field_name(ts_field_name::DATA_TYPE_KIND);
         let n = rs_option(opt, "")?;
         self.visit_data_type_kind(context, n)
     }
 
-    fn visit_data_type_kind(&self, context: &ParseContext, node: Node) -> RS<DatType> {
+    fn visit_data_type_kind(&self, context: &ParseContext, node: Node) -> RS<DatPrim> {
         let opt_n = node.child(0);
         let child = rs_option(opt_n, "no child in data type kind")?;
         let kind = child.kind_id();
         let type_declare = match kind {
-            ts_kind_id::INT => DatType::new_with_no_param(DatTypeID::I32),
-            ts_kind_id::BIGINT => DatType::new_with_no_param(DatTypeID::I64),
-            ts_kind_id::DOUBLE => DatType::new_with_no_param(DatTypeID::F64),
-            ts_kind_id::FLOAT => DatType::new_with_no_param(DatTypeID::F32),
+            ts_kind_id::INT => DatPrim::new_without_param(DatTypeID::I32),
+            ts_kind_id::BIGINT => DatPrim::new_without_param(DatTypeID::I64),
+            ts_kind_id::DOUBLE => DatPrim::new_without_param(DatTypeID::F64),
+            ts_kind_id::FLOAT => DatPrim::new_without_param(DatTypeID::F32),
             ts_kind_id::CHAR | ts_kind_id::VARCHAR | ts_kind_id::KEYWORD_TEXT => {
-                let data_type_id = if kind == ts_kind_id::CHAR {
-                    DatTypeID::CharFixedLen
-                } else {
-                    DatTypeID::CharVarLen
-                };
+                let data_type_id = DatTypeID::String;
                 let dt_param = if kind == ts_kind_id::CHAR || kind == ts_kind_id::VARCHAR {
                     let params = self.visit_char_param(context, child)?;
-                    let info = ParamInfo {
+                    let info = DTInfo {
                         id: data_type_id,
-                        type_param: params,
+                        param: params,
                     };
-                    info.to_object()
+                    info.to_dat_type()?
                 } else {
-                    ParamObj::default_for(data_type_id)
+                    DatType::default_for(data_type_id)
                 };
-                DatType::new_with_obj(dt_param)
+                DatPrim::new(dt_param)
             }
-            ts_kind_id::NUMERIC => DatType::new_with_no_param(DatTypeID::F64),
-            ts_kind_id::DECIMAL => DatType::new_with_no_param(DatTypeID::F64),
-            ts_kind_id::KEYWORD_TIMESTAMP => DatType::new_with_no_param(DatTypeID::I64),
+            ts_kind_id::NUMERIC => DatPrim::new_without_param(DatTypeID::F64),
+            ts_kind_id::DECIMAL => DatPrim::new_without_param(DatTypeID::F64),
+            ts_kind_id::KEYWORD_TIMESTAMP => DatPrim::new_without_param(DatTypeID::I64),
             _ => {
                 return Err(m_error!(
                     EC::NotImplemented,
@@ -825,12 +822,12 @@ impl SQLParser {
         Ok(type_declare)
     }
 
-    fn visit_char_param(&self, context: &ParseContext, node: Node) -> RS<Vec<String>> {
+    fn visit_char_param(&self, context: &ParseContext, node: Node) -> RS<String> {
         if let Some(n) = node.child_by_field_name(ts_field_name::LENGTH) {
             let s = ts_node_context_string(&context.parse_str(), &n)?;
             let r = u32::from_str(s.as_str());
             match r {
-                Ok(l) => Ok(vec![l.to_string()]),
+                Ok(l) => Ok(serde_json::json!({param::LENGTH: l}).to_string()),
                 Err(e) => Err(m_error!(EC::ParseErr, "parse u32 error", e)),
             }
         } else {

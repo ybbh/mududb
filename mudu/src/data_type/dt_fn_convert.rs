@@ -1,59 +1,91 @@
-use crate::data_type::dt_impl::dat_typed::DatTyped;
-use crate::data_type::param_obj::ParamObj;
-use crate::tuple::dat_binary::DatBinary;
-use crate::tuple::dat_internal::DatInternal;
-use crate::tuple::dat_printable::DatPrintable;
+use crate::data_type::dat_json::DatJson;
+use crate::data_type::{
+    dat_binary::DatBinary,
+    dat_textual::DatTextual,
+    dat_type::DatType,
+    dat_value::DatValue,
+};
+use crate::utils::json::JsonValue;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
+/// Error types for base function operations
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
 pub enum ErrFnBase {
+    ErrLengthError,
+    /// Failed to convert between types
     ErrTypeConvert(String),
-    ErrLowBufSpace(usize),
+    /// Insufficient buffer space for operation
+    ErrLowBufSpace(u32),
 }
 
 impl Display for ErrFnBase {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(format!("{:?}", self).as_str())
+        write!(f, "{:?}", self)
     }
 }
 
 impl Error for ErrFnBase {}
 
-/// `FnInput` converts the type's external textual representation to the internal representation
-/// used by the operators and functions defined for the type.
-pub type FnInput = fn(&DatPrintable, &ParamObj) -> Result<DatInternal, ErrFnBase>;
+// =============================================================================
+// Function Type Definitions
+// =============================================================================
 
-/// `FnOutput` converts the type's the internal representation  used by the operators and functions
-/// defined for the type to external textual representation.
-pub type FnOutput = fn(&DatInternal, &ParamObj) -> Result<DatPrintable, ErrFnBase>;
+/// Converts external textual representation to internal representation
+pub type FnInputTextual = fn(&str, &DatType) -> Result<DatValue, ErrFnBase>;
 
-/// `FnLen` return the length of the type, if it is a fixed length type
-pub type FnLen = fn(&ParamObj) -> Option<usize>;
+/// Converts internal representation to external textual representation
+pub type FnOutputTextual = fn(&DatValue, &DatType) -> Result<DatTextual, ErrFnBase>;
 
-/// `FnSend` converts from the internal representation to the external binary representation
-pub type FnSend = fn(&DatInternal, &ParamObj) -> Result<DatBinary, ErrFnBase>;
+/// Converts external textual representation to internal representation
+pub type FnInputJson = fn(&JsonValue, &DatType) -> Result<DatValue, ErrFnBase>;
 
-pub type FnSendTo = fn(&DatInternal, &ParamObj, &mut [u8]) -> Result<usize, ErrFnBase>;
+/// Converts internal representation to external textual representation
+pub type FnOutputJson = fn(&DatValue, &DatType) -> Result<DatJson, ErrFnBase>;
 
-/// `FnRecv` converts from the external binary representation to the internal representation
-pub type FnRecv = fn(&[u8], &ParamObj) -> Result<DatInternal, ErrFnBase>;
+/// Returns fixed byte length for fixed-length data types
+pub type FnTypeLen = fn(&DatType) -> Result<Option<u32>, ErrFnBase>;
 
-pub type FnToTyped = fn(&DatInternal, &ParamObj) -> Result<DatTyped, ErrFnBase>;
+/// Returns byte length for variable-length data types
+pub type FnDataLen = fn(&DatValue, &DatType) -> Result<u32, ErrFnBase>;
 
-pub type FnFromTyped = fn(&DatTyped, &ParamObj) -> Result<DatInternal, ErrFnBase>;
+/// Converts internal representation to external binary representation
+pub type FnSend = fn(&DatValue, &DatType) -> Result<DatBinary, ErrFnBase>;
 
-pub type FnDefault = fn(&ParamObj) -> Result<DatInternal, ErrFnBase>;
+/// Converts internal representation to external binary representation into provided buffer
+pub type FnSendTo = fn(&DatValue, &DatType, &mut [u8]) -> Result<u32, ErrFnBase>;
 
+/// Converts external binary representation to internal representation
+pub type FnReceive = fn(&[u8], &DatType) -> Result<(DatValue, u32), ErrFnBase>;
+
+/// Provides default value for data type
+pub type FnDefault = fn(&DatType) -> Result<DatValue, ErrFnBase>;
+
+// =============================================================================
+// Core Function Structure
+// =============================================================================
+
+/// Collection of base functions that define data type operations
 pub struct FnBase {
-    pub input: FnInput,
-    pub output: FnOutput,
-    pub len: FnLen,
-    pub recv: FnRecv,
+    /// Converts text input to internal representation
+    pub input_textual: FnInputTextual,
+    /// Converts internal representation to text output
+    pub output_textual: FnOutputTextual,
+    /// Converts JSON input to internal representation
+    pub input_json: FnInputJson,
+    /// Converts internal representation to JSON output
+    pub output_json: FnOutputJson,
+    /// Returns fixed length for data type
+    pub type_len: FnTypeLen,
+    /// Returns byte length for variable-length data type
+    pub data_len: FnDataLen,
+    /// Receives binary data and converts to internal representation
+    pub receive: FnReceive,
+    /// Sends internal representation as binary data
     pub send: FnSend,
+    /// Sends internal representation to provided buffer
     pub send_to: FnSendTo,
-    pub to_typed: FnToTyped,
-    pub from_typed: FnFromTyped,
+    /// Provides default value for data type
     pub default: FnDefault,
 }

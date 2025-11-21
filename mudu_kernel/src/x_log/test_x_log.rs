@@ -1,9 +1,7 @@
 #[cfg(test)]
 mod test {
-    use crate::contract::a_task::AsyncTask;
     use crate::contract::x_log::{OptAppend, XLog};
     use crate::contract::xl_rec::XLRec;
-    use crate::sync::s_mutex::SMutex;
     use crate::x_log::x_log_service::XLogService;
     use crate::x_log::xl_cfg::XLCfg;
     use chrono::{DateTime, Local};
@@ -13,7 +11,9 @@ mod test {
     use mudu::m_error;
     use mudu_utils::debug;
     use mudu_utils::log::log_setup;
-    use mudu_utils::notifier::Notifier;
+    use mudu_utils::notifier::NotifyWait;
+    use mudu_utils::sync::a_task::AsyncTask;
+    use mudu_utils::sync::s_mutex::SMutex;
     use mudu_utils::task::spawn_local_task;
     use mudu_utils::task_trace;
     use std::sync::Arc;
@@ -65,8 +65,8 @@ mod test {
             1000,
             use_io_uring,
         );
-        let canceller = Notifier::new();
-        let service = recovery(cfg.clone(), canceller.clone(), Notifier::new());
+        let canceller = NotifyWait::new();
+        let service = recovery(cfg.clone(), canceller.clone(), NotifyWait::new());
         let x_log_vec = service.x_log_channel();
         let mut thd_debug = vec![];
         {
@@ -132,7 +132,7 @@ mod test {
         }
     }
 
-    fn recovery(folder: XLCfg, canceller: Notifier, recovery_done_notifier: Notifier) -> XLogService {
+    fn recovery(folder: XLCfg, canceller: NotifyWait, recovery_done_notifier: NotifyWait) -> XLogService {
         let (sender, s) = std::sync::mpsc::channel::<XLogService>();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -162,8 +162,8 @@ mod test {
 
     async fn async_recovery(
         cfg: XLCfg,
-        canceller: Notifier,
-        recovery_done_notifier: Notifier,
+        canceller: NotifyWait,
+        recovery_done_notifier: NotifyWait,
     ) -> XLogService {
         let _trace = task_trace!();
         let service = XLogService::new(cfg, canceller, recovery_done_notifier).unwrap();
@@ -177,7 +177,7 @@ mod test {
         param: AsyncTask,
         channel: Vec<DataReceiver>,
     ) -> (Duration, u64) {
-        let canceler: Notifier = Notifier::new();
+        let canceler: NotifyWait = NotifyWait::new();
         let c = canceler.clone();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -212,7 +212,7 @@ mod test {
     }
 
     async fn thread_task(
-        canceler: Notifier,
+        canceler: NotifyWait,
         x_log: Arc<dyn XLog>,
         fsync_task: AsyncTask,
         channel: Vec<DataReceiver>,
@@ -254,7 +254,7 @@ mod test {
     }
 
     async fn write_log_multi_task(
-        canceler: Notifier,
+        canceler: NotifyWait,
         x_log: Arc<dyn XLog>,
         channel: Vec<DataReceiver>,
     ) -> RS<(Duration, u64)> {
@@ -286,7 +286,7 @@ mod test {
     }
 
     async fn write_log(
-        _canceler: Notifier,
+        _canceler: NotifyWait,
         x_log: Arc<dyn XLog>,
         channel: DataReceiver,
     ) -> RS<(Duration, u64)> {

@@ -5,10 +5,8 @@ pub mod x_log;
 
 pub mod meta_mgr;
 
-pub mod a_task;
 pub mod cmd_exec;
 pub mod query_exec;
-pub mod s_task;
 pub mod ssn_ctx;
 pub mod waiter;
 pub mod xl_chunk;

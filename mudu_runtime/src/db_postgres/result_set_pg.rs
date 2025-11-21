@@ -1,8 +1,9 @@
 use mudu::common::result::RS;
-use mudu::data_type::dt_impl::dat_type_id::DatTypeID;
-use mudu::data_type::dt_impl::dat_typed::DatTyped;
+use mudu::data_type::dat_type_id::DatTypeID;
+use mudu::data_type::dat_value::DatValue;
 use mudu::database::result_set::ResultSet;
-use mudu::tuple::datum::DatumDyn;
+use mudu::error::ec::EC;
+use mudu::m_error;
 use mudu::tuple::tuple_field::TupleField;
 use mudu::tuple::tuple_field_desc::TupleFieldDesc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -33,30 +34,30 @@ impl ResultSet for ResultSetPG {
                     let datum = match id {
                         DatTypeID::I32 => {
                             let val: i32 = row.get(i);
-                            DatTyped::I32(val)
+                            DatValue::from_i32(val)
                         }
                         DatTypeID::I64 => {
                             let val: i64 = row.get(i);
-                            DatTyped::I64(val)
+                            DatValue::from_i64(val)
                         }
                         DatTypeID::F32 => {
                             let val: f32 = row.get(i);
-                            DatTyped::F32(val)
+                            DatValue::from_f32(val)
                         }
                         DatTypeID::F64 => {
                             let val: f64 = row.get(i);
-                            DatTyped::F64(val)
+                            DatValue::from_f64(val)
                         }
-                        DatTypeID::CharFixedLen => {
+                        DatTypeID::String => {
                             let val: String = row.get(i);
-                            DatTyped::String(val)
+                            DatValue::from_string(val)
                         }
-                        DatTypeID::CharVarLen => {
-                            let val: String = row.get(i);
-                            DatTyped::String(val)
+                        _ => {
+                            panic!("unsupported type {:?}", id);
                         }
                     };
-                    let binary = datum.to_binary(d.param_obj())?;
+                    let binary = id.fn_send()(&datum, d.dat_type())
+                        .map_err(|e| m_error!(EC::TypeBaseErr, "type convert error", e))?;
                     tuple_row.push(binary.into());
                 }
                 Ok(Some(TupleField::new(tuple_row)))

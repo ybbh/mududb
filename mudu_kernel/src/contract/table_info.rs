@@ -24,10 +24,10 @@ struct TableInner {
 }
 
 impl TableInfo {
-    pub fn new(table_schema: SchemaTable) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(TableInner::new(table_schema))),
-        }
+    pub fn new(table_schema: SchemaTable) -> RS<Self> {
+        Ok(Self {
+            inner: Arc::new(Mutex::new(TableInner::new(table_schema)?)),
+        })
     }
 
     pub fn table_desc(&self) -> RS<Arc<TableDesc>> {
@@ -51,9 +51,9 @@ impl TableInfo {
 }
 
 impl TableInner {
-    pub fn new(table_schema: SchemaTable) -> Self {
-        let (key_tuple_desc, key_tuple_payload_info) = table_schema.key_tuple_desc();
-        let (value_tuple_desc, value_tuple_payload_info) = table_schema.value_tuple_desc();
+    pub fn new(table_schema: SchemaTable) -> RS<Self> {
+        let (key_tuple_desc, key_tuple_payload_info) = table_schema.key_tuple_desc()?;
+        let (value_tuple_desc, value_tuple_payload_info) = table_schema.value_tuple_desc()?;
         if value_tuple_desc.field_count() != value_tuple_payload_info.len() {
             panic!("field describe length mismatch");
         }
@@ -72,7 +72,7 @@ impl TableInner {
             }
         }
 
-        Self {
+        Ok(Self {
             schema_table: Arc::new(table_schema),
             name2oid,
             oid2column,
@@ -80,7 +80,7 @@ impl TableInner {
             value_oid,
             key_tuple_desc,
             value_tuple_desc,
-        }
+        })
     }
 
     pub fn id(&self) -> OID {

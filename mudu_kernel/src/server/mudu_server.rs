@@ -1,16 +1,12 @@
-use mudu_utils::notifier::Notifier;
+use mudu_utils::notifier::NotifyWait;
 
 use crate::common::mudu_cfg::{load_mudu_conf, MuduCfg};
-use crate::contract::a_task::{ATaskRef, AsyncTask};
-use crate::contract::s_task::{STask, SyncTask};
 use crate::meta::meta_mgr_factory::MetaMgrFactory;
 use crate::server::accept_handle_task::AcceptHandleTask;
 use crate::server::incoming_session::IncomingSession;
 use crate::server::session_handle_task::SessionHandleTask;
 use crate::storage::mem_store_factory::MemStoreFactory;
 use crate::storage::pst_store_factory::PstStoreFactory;
-use crate::sync::notify_wait::{create_notify_wait, Notify, Wait};
-use crate::sync::unique_inner::UniqueInner;
 use crate::tx::tx_mgr_factory::TxMgrFactory;
 use crate::x_engine::thd_ctx::ThdCtx;
 use crate::x_log::x_log_service::XLogService;
@@ -19,6 +15,10 @@ use mudu::common::result::RS;
 use mudu::error::ec::EC as ER;
 use mudu::m_error;
 use mudu_utils::debug;
+use mudu_utils::sync::a_task::{ATaskRef, AsyncTask};
+use mudu_utils::sync::notify_wait::{create_notify_wait, Notify, Wait};
+use mudu_utils::sync::s_task::{STask, SyncTask};
+use mudu_utils::sync::unique_inner::UniqueInner;
 use mudu_utils::task::spawn_local_task;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -38,17 +38,17 @@ pub struct MuduServer {
 }
 
 pub struct MuduStop {
-    canceller: Notifier,
+    canceller: NotifyWait,
     wait: Wait<()>,
 }
 
 struct DebugServer {
-    canceler: Notifier,
+    canceler: NotifyWait,
     port: u16,
 }
 
 impl MuduStop {
-    fn new(canceller: Notifier, wait: Wait<()>) -> MuduStop {
+    fn new(canceller: NotifyWait, wait: Wait<()>) -> MuduStop {
         Self { canceller, wait }
     }
     pub fn stop(&self) {
@@ -67,11 +67,11 @@ impl MuduStop {
 impl MuduServer {
     pub fn start(cfg_path: Option<String>) -> RS<(Self, MuduStop)> {
         let mut thread_handle = vec![];
-        let canceller = Notifier::new();
+        let canceller = NotifyWait::new();
 
         let cfg = load_mudu_conf(cfg_path)?;
 
-        let wait_recovery = Notifier::new();
+        let wait_recovery = NotifyWait::new();
         let x_log_path = PathBuf::from(&cfg.db_path);
         let x_log_path = x_log_path.join(&cfg.x_log_folder);
         let x_log_path = x_log_path.to_str().unwrap().to_string();
@@ -218,7 +218,7 @@ impl MuduServer {
     }
 
     fn create_thread(
-        canceller: Notifier,
+        canceller: NotifyWait,
         name: String,
         tasks: Vec<AsyncTask>,
     ) -> RS<JoinHandle<RS<()>>> {
@@ -239,7 +239,7 @@ impl MuduServer {
         Ok(thd)
     }
 
-    fn _thread_task(canceller: Notifier, name: String, tasks: Vec<AsyncTask>) -> RS<()> {
+    fn _thread_task(canceller: NotifyWait, name: String, tasks: Vec<AsyncTask>) -> RS<()> {
         let r_tokio_runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build();
@@ -271,7 +271,7 @@ impl MuduServer {
 }
 
 impl DebugServer {
-    fn new(canceler: Notifier, port: u16) -> Self {
+    fn new(canceler: NotifyWait, port: u16) -> Self {
         Self { canceler, port }
     }
 }

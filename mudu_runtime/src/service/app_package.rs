@@ -128,6 +128,6 @@ mod tests {
             .unwrap()
             .to_string();
         let package = AppPackage::load(&package_file).unwrap();
-        assert_eq!(package.name(), "app1");
+        assert_eq!(package.name(), "package1");
     }
 }

@@ -83,13 +83,13 @@ impl ProcResult {
     }
 
     pub fn to_json(&self, desc: &TupleFieldDesc) -> RS<RS<Value>> {
-        if self.err_code != EC::Ok.to_u32() {
+        if self.err_code == EC::Ok.to_u32() {
             let mut vec = Vec::with_capacity(self.result_set.len());
             for (_i, row) in self.result_set.iter().enumerate() {
                 let value = row.to_json_value(desc.fields())?;
                 vec.push(value);
             }
-            let value = if vec.len() == 1 {
+            let value = if vec.len() == 0 {
                 Value::Null
             } else if vec.len() == 1 {
                 vec.pop().unwrap()
@@ -111,9 +111,9 @@ impl ProcResult {
                 for (i, field) in tuple.fields().iter().enumerate() {
                     let datum_desc = &desc.fields()[i];
                     let id = datum_desc.dat_type_id();
-                    let internal = id.fn_recv()(field, datum_desc.param_obj())
+                    let (internal, _size) = id.fn_recv()(field, datum_desc.dat_type())
                         .map_err(|e| m_error!(TypeBaseErr, "", e))?;
-                    let printable = id.fn_output()(&internal, datum_desc.param_obj())
+                    let printable = id.fn_output()(&internal, datum_desc.dat_type())
                         .map_err(|e| m_error!(TypeBaseErr, "", e))?;
                     vec_string.push(printable.into())
                 }

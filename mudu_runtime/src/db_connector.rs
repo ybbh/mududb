@@ -1,4 +1,4 @@
-use crate::db_libsql::ls_conn::create_ls_conn;
+use crate::db_libsql::ls_conn::{create_ls_conn, db_conn_get_libsql_connection};
 use crate::db_postgres::pg_interactive_conn::create_pg_interactive_conn;
 use mudu::common::result::RS;
 use mudu::database::db_conn::DBConn;
@@ -6,6 +6,7 @@ use mudu::error::ec::EC;
 use mudu::m_error;
 use std::str::FromStr;
 use std::sync::Arc;
+use libsql::Connection;
 use strum_macros::EnumString;
 
 pub struct DBConnector {}
@@ -46,10 +47,7 @@ impl DBConnector {
             }
         }
 
-        let ddl_path = match opt_ddl_path {
-            Some(ddl_path) => ddl_path,
-            None => String::default(),
-        };
+        let ddl_path = opt_ddl_path.unwrap_or_else(|| String::default());
         let app_name = opt_app.unwrap_or(String::default());
         let params = merge_to_string(passing_param);
         match opt_db_type {
@@ -59,6 +57,10 @@ impl DBConnector {
             },
             None => Err(m_error!(EC::ParseErr, "not a valid DB type")),
         }
+    }
+
+    pub fn get_libsql_conn(db_conn:Arc<dyn DBConn>) -> Option<Connection> {
+        db_conn_get_libsql_connection(db_conn)
     }
 }
 

@@ -23,3 +23,5 @@ pub mod serde_utils;
 pub mod this_file;
 pub mod update_delta;
 pub mod xid;
+pub mod cmp_order;
+pub mod cmp_equal;
