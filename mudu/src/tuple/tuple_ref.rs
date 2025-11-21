@@ -1,7 +1,4 @@
 use crate::common::result::RS;
-use crate::data_type::dt_impl::dat_typed::DatTyped;
-use crate::error::ec::EC;
-use crate::m_error;
 use crate::tuple::read_datum::{read_fixed_len_value, read_var_len_value};
 use crate::tuple::slot::Slot;
 use crate::tuple::tuple_binary_desc::TupleBinaryDesc;
@@ -27,18 +24,6 @@ impl<'a, 'b> TupleRef<'a, 'b> {
         self._get_binary_data(fd.slot(), fd.is_fixed_len())
     }
 
-    pub fn get_typed_value(&self, idx: usize) -> RS<DatTyped> {
-        let fd = self.desc.get_field_desc(idx);
-        let binary = self._get_binary_data(fd.slot(), fd.is_fixed_len())?;
-        let data_type = fd.data_type();
-        let recv = data_type.fn_recv();
-        let to_typed = data_type.fn_to_typed();
-        let internal = recv(binary, fd.type_param())
-            .map_err(|e| m_error!(EC::TypeBaseErr, "convert data format error", e))?;
-        let typed_value = to_typed(&internal, fd.type_param())
-            .map_err(|e| m_error!(EC::TypeBaseErr, "convert data format error", e))?;
-        Ok(typed_value)
-    }
 
     fn _get_binary_data(&self, s: &Slot, fixed_len: bool) -> RS<&'a [u8]> {
         if fixed_len {

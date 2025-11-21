@@ -1,57 +1,66 @@
-use std::path::PathBuf;
-use crate::service::app_inst::AppInst;
-use crate::service::runtime_simple::RuntimeSimple;
-use crate::service::service::Service;
+use tracing::info;
 use mudu::common::result::RS;
-use std::sync::Arc;
 use mudu::error::ec::EC;
 use mudu::m_error;
+use mudu_utils::sync::async_task::TaskWrapper;
+use crate::service::service_trait::ServiceTrait;
 
-struct ServiceImpl {
-    runtime: Arc<RuntimeSimple>,
+pub struct ServiceImpl {
+    tasks:scc::Queue<TaskWrapper>,
 }
 
 impl ServiceImpl {
-    pub fn new(package_path: &String, db_path: &String) -> RS<Self> {
-        for ps in [package_path, db_path] {
-            let path = PathBuf::from(ps);
-            if !path.exists() {
-                std::fs::create_dir_all(&path).map_err(|e| {
-                    m_error!(EC::IOErr, format!("error creating database directory: {}", ps), e)
-                })?
-            } else {
-                if !path.is_dir() {
-                  return Err(m_error!(EC::IOErr, format!("{} is not a directory", ps)))
+    pub fn new() -> Self {
+        Self { tasks:Default::default() }
+    }
+}
+
+impl ServiceTrait for ServiceImpl {
+    fn register(&self, task: TaskWrapper) -> RS<()> {
+        self.tasks.push(task);
+        Ok(())
+    }
+
+    fn serve(self) -> RS<()> {
+        let tasks = self.tasks;
+        let mut builder = tokio::runtime::Builder::new_current_thread();
+        let r = builder
+            .enable_all()
+            .build()
+            .map_err(|e| m_error!(EC::IOErr, "build runtime error", e))?
+            .block_on(async {
+                let mut task_result = vec![];
+                let mut result = vec![];
+                let mut joinable = vec![];
+                while let Some(task) = tasks.pop() {
+                    let join_handle =
+                        task.as_ref().async_run();
+                    task_result.push(join_handle);
                 }
-            }
-        }
-        let mut runtime = RuntimeSimple::new(package_path, db_path);
-        runtime.initialized()?;
-        let ret = Self {
-            runtime: Arc::new(runtime),
-        };
-        Ok(ret)
+                result.resize_with(task_result.len(), ||{
+                    Some(m_error!(EC::NoneErr))
+                });
+                let mut error_count = 0;
+                for (i, join) in task_result.into_iter().enumerate() {
+                    match join {
+                        Ok(r) => {
+                            joinable.push(r)
+                        },
+                        Err(e) => {
+                            error_count += 1;
+                            result[i] = Some(e);
+                        }
+                    }
+                }
+                if error_count > 0 {
+                    Ok(result)
+                } else {
+                    TaskWrapper::join_all(joinable).await
+                        .map_err(|e| m_error!(EC::IOErr, "join error", e))?;
+                    Ok(result)
+                }
+            })?;
+        info!("task join result: {:?}", r);
+        Ok(())
     }
-}
-
-impl Service for ServiceImpl {
-    fn list(&self) -> Vec<String> {
-        self.runtime.list()
-    }
-
-    fn app(&self, app_name: &String) -> Option<Arc<dyn AppInst>> {
-        self.runtime.app(app_name)
-    }
-
-    fn install(&self, pkg_path: &String) -> RS<()> {
-        self.runtime.install(pkg_path)
-    }
-}
-
-unsafe impl Sync for ServiceImpl {}
-
-unsafe impl Send for ServiceImpl {}
-
-pub fn create_runtime_service(package_path: &String, db_path: &String) -> RS<Arc<dyn Service>> {
-    Ok(Arc::new(ServiceImpl::new(package_path, db_path)?))
 }

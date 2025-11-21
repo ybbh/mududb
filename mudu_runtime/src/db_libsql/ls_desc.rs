@@ -1,7 +1,7 @@
 use libsql::Connection;
 use mudu::common::result::RS;
 use mudu::data_type::dat_type::DatType;
-use mudu::data_type::dt_impl::dat_type_id::DatTypeID;
+use mudu::data_type::dat_type_id::DatTypeID;
 use mudu::error::ec::EC;
 use mudu::error::err::MError;
 use mudu::m_error;
@@ -33,7 +33,7 @@ pub async fn desc_projection(conn: &Connection, query: &str) -> Result<Vec<Datum
         let id = sqlite_decl_type_to_id(column.decl_type().unwrap())?;
         let desc = DatumDesc::new(
             column.name().to_string(),
-            DatType::new_with_default_param(id),
+            DatType::default_for(id),
         );
 
         schema.push(desc);
@@ -44,8 +44,8 @@ pub async fn desc_projection(conn: &Connection, query: &str) -> Result<Vec<Datum
 
 fn sqlite_decl_type_to_id(name: &str) -> RS<DatTypeID> {
     let id = match name {
-        "TEXT" => DatTypeID::CharVarLen,
-        "INT"|"INTEGER" => DatTypeID::I32,
+        "TEXT" => DatTypeID::String,
+        "INT" | "INTEGER" => DatTypeID::I32,
         "BIGINT" => DatTypeID::I64,
         "REAL" => DatTypeID::F64,
         _ => {

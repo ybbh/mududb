@@ -12,7 +12,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ ubuntu-latest, windows-latest ]
         include:
           - os: ubuntu-latest
             rust_target: x86_64-unknown-linux-gnu
@@ -23,8 +23,16 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v5
 
+      - name: Install Rust Nightly
+        run: |
+          rustup toolchain install nightly
+          rustup default nightly
+
+      - name: Install rustfmt
+        run: rustup component add rustfmt --toolchain nightly
+
       - name: Update Rust Toolchain
-        run: rustup update stable
+        run: rustup update nightly
 
       - name: Installing Prerequisites (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -39,9 +47,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-nightly-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo
+            ${{ runner.os }}-cargo-nightly
 
       - name: Clean cargo cache
         run: cargo clean

@@ -1,13 +1,14 @@
-use crate::contract::a_task::{ATask, AsyncTask};
 use crate::contract::snapshot::{RunningXList, Snapshot};
-use crate::sync::unique_inner::UniqueInner;
 use mudu::common::result::RS;
 use mudu::common::xid::XID;
 use mudu::error::ec::EC as ER;
 use mudu::m_error;
-use mudu_utils::notifier::Notifier;
+use mudu_utils::notifier::NotifyWait;
+use mudu_utils::sync::a_task::{ATask, AsyncTask};
+use mudu_utils::sync::unique_inner::UniqueInner;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
+use async_trait::async_trait;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::oneshot::channel as oneshot_channel;
 use tokio::sync::oneshot::{Receiver as OneshotReceiver, Sender as OneshotSender};
@@ -28,7 +29,7 @@ pub struct XRunningHandler {
 }
 
 struct _HandlerInner {
-    canceller: Notifier,
+    canceller: NotifyWait,
     name: String,
     channel: Mutex<Option<OpReceiver>>,
     ts: u64,
@@ -55,7 +56,7 @@ impl Debug for XListOp {
 }
 
 impl XSnapMgr {
-    pub fn new(canceller: Notifier, ts: u64, snap_request_queue_size: usize) -> Self {
+    pub fn new(canceller: NotifyWait, ts: u64, snap_request_queue_size: usize) -> Self {
         let (s, r) = channel::<XListOp>(snap_request_queue_size);
 
         let handler = _HandlerInner::new(canceller, "snap_alloc".to_string(), ts, r);
@@ -99,7 +100,7 @@ impl SnapshotRequester {
 }
 
 impl XRunningHandler {
-    fn new(canceller: Notifier, ts: u64, channel: OpReceiver) -> Self {
+    fn new(canceller: NotifyWait, ts: u64, channel: OpReceiver) -> Self {
         Self {
             inner: Arc::new(Mutex::new(_HandlerInner::new(
                 canceller,
@@ -118,7 +119,7 @@ impl XRunningHandler {
 }
 
 impl _HandlerInner {
-    fn new(canceller: Notifier, name: String, ts: u64, channel: OpReceiver) -> _HandlerInner {
+    fn new(canceller: NotifyWait, name: String, ts: u64, channel: OpReceiver) -> _HandlerInner {
         Self {
             canceller,
             name,
@@ -184,8 +185,9 @@ impl _HandlerInner {
     }
 }
 
+#[async_trait]
 impl ATask for _HandlerInner {
-    fn notifier(&self) -> Notifier {
+    fn notifier(&self) -> NotifyWait {
         self.canceller.clone()
     }
 

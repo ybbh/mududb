@@ -1,8 +1,8 @@
 use crate::contract::x_lock_mgr::LockResult;
-use crate::sync::notify_wait::Notify;
-use crate::sync::s_mutex::SMutex;
 use mudu::common::result::RS;
 use mudu::common::xid::XID;
+use mudu_utils::sync::notify_wait::Notify;
+use mudu_utils::sync::s_mutex::SMutex;
 use std::collections::VecDeque;
 use std::sync::Arc;
 

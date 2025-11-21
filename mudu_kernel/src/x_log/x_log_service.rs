@@ -1,7 +1,4 @@
-use crate::contract::a_task::{ATaskRef, AsyncTask};
 use crate::contract::x_log::XLog;
-use crate::sync::s_mutex::SMutex;
-use crate::sync::unique_inner::UniqueInner;
 use crate::x_log::fsync_task::FsyncTask;
 use crate::x_log::lsn_allocator::LSNAllocator;
 use crate::x_log::lsn_syncer::LSNSyncer;
@@ -12,7 +9,10 @@ use crate::x_log::xl_file_info::XLFileInfo;
 use mudu::common::result::RS;
 use mudu::error::ec::EC as ER;
 use mudu::m_error;
-use mudu_utils::notifier::Notifier;
+use mudu_utils::notifier::NotifyWait;
+use mudu_utils::sync::a_task::{ATaskRef, AsyncTask};
+use mudu_utils::sync::s_mutex::SMutex;
+use mudu_utils::sync::unique_inner::UniqueInner;
 use std::fs;
 use std::sync::Arc;
 use tokio::sync::mpsc::channel;
@@ -29,7 +29,7 @@ pub struct XLogService {
 const LOG_FILE_LIMIT: usize = 1024 * 1024 * 10;
 
 impl XLogService {
-    pub fn new(cfg: XLCfg, canceller: Notifier, recovery_done: Notifier) -> RS<Self> {
+    pub fn new(cfg: XLCfg, canceller: NotifyWait, recovery_done: NotifyWait) -> RS<Self> {
         let lsn_syncer = LSNSyncer::new(0);
         let lsn_allocator = LSNAllocator::new();
 

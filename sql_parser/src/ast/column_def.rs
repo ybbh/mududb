@@ -1,17 +1,17 @@
+use mudu::data_type::dat_prim::DatPrim;
 use mudu::data_type::dat_type::DatType;
-use mudu::data_type::dt_impl::dat_type_id::DatTypeID;
-use mudu::data_type::param_obj::ParamObj;
+use mudu::data_type::dat_type_id::DatTypeID;
 
 #[derive(Clone, Debug)]
 pub struct ColumnDef {
     column_name: String,
-    data_type_def: DatType,
+    data_type_def: DatPrim,
     is_primary_key: bool,
     index: u32,
 }
 
 impl ColumnDef {
-    pub fn new(column_name: String, data_type_def: DatType, is_primary_key: bool) -> Self {
+    pub fn new(column_name: String, data_type_def: DatPrim, is_primary_key: bool) -> Self {
         Self {
             column_name,
             data_type_def,
@@ -24,15 +24,15 @@ impl ColumnDef {
         self.data_type_def.id()
     }
 
-    pub fn type_param(&self) -> ParamObj {
-        self.data_type_def.param().clone()
+    pub fn type_param(&self) -> DatType {
+        self.data_type_def.type_obj().clone()
     }
 
     pub fn is_primary_key(&self) -> bool {
         self.is_primary_key
     }
 
-    pub fn type_declare(&self) -> &DatType {
+    pub fn type_declare(&self) -> &DatPrim {
         &self.data_type_def
     }
     pub fn column_name(&self) -> &String {

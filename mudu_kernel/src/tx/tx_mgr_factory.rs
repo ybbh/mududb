@@ -2,7 +2,7 @@ use crate::contract::snapshot::TimeSeq;
 use crate::contract::x_lock_mgr::XLockMgr;
 use crate::tx::x_lock_mgr::XLockMgrImpl;
 use crate::tx::x_snap_mgr::XSnapMgr;
-use mudu_utils::notifier::Notifier;
+use mudu_utils::notifier::NotifyWait;
 use std::sync::Arc;
 
 pub struct TxMgrFactory {}
@@ -13,7 +13,7 @@ impl TxMgrFactory {
     }
 
     pub fn create_snap_mgr(
-        canceller: Notifier,
+        canceller: NotifyWait,
         xid_max: TimeSeq,
         snap_request_queue_size: usize,
     ) -> Arc<XSnapMgr> {

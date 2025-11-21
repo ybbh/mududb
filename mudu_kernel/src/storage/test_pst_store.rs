@@ -6,7 +6,7 @@ mod _test {
     use crate::contract::timestamp::Timestamp;
     use crate::storage::pst_store_factory::PstStoreFactory;
     use mudu::common::result::RS;
-    use mudu_utils::notifier::Notifier;
+    use mudu_utils::notifier::NotifyWait;
 
     use mudu_utils::log::log_setup;
     use tokio::sync::oneshot;
@@ -45,13 +45,13 @@ mod _test {
                 ops.push_update(i, i, Timestamp::new(2, 3), Default::default());
 
                 ch.async_run(ops).unwrap();
-                let notifier = Notifier::new();
+                let notifier = NotifyWait::new();
                 let mut ops = PstOpList::new();
                 ops.push_delete(i, i);
                 ch.async_run(ops).unwrap();
             }
             let (s, r) = oneshot::channel();
-            let notifier = Notifier::new();
+            let notifier = NotifyWait::new();
             let mut ops = PstOpList::new();
             ops.push_stop(s);
             ch.async_run(ops).unwrap();

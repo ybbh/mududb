@@ -1,22 +1,29 @@
-use crate::common::result::RS;
-use crate::database::attr_binary::AttrBinary;
-use crate::tuple::datum::Datum;
+use crate::data_type::datum::Datum;
+use crate::data_type::dt_fn_param::DatType;
 use crate::tuple::datum_desc::DatumDesc;
 
-pub trait AttrValue<T: Datum>: AttrBinary + Sized {
-    fn datum_desc() -> &'static DatumDesc {
-        T::datum_desc()
+
+pub trait AttrValue<T: Datum>: private::Sealed<T> + Sized {
+    fn attr_dat_type() -> DatType {
+        T::dat_type().clone()
     }
 
-    fn new(datum: T) -> Self;
+    fn attr_datum_desc() -> DatumDesc {
+        DatumDesc::new(Self::attr_name().to_string(), Self::attr_dat_type().clone())
+    }
 
-    fn from_binary<B: AsRef<[u8]>>(datum: B) -> RS<Self>;
+    fn dat_type() -> &'static DatType;
 
-    fn table_name() -> &'static str;
+    fn object_name() -> &'static str;
 
-    fn column_name() -> &'static str;
+    fn datum_desc() -> &'static DatumDesc;
 
-    fn get_value(&self) -> T;
-
-    fn set_value(&mut self, value: T);
+    fn attr_name() -> &'static str;
 }
+
+mod private {
+    use super::Datum;
+
+    pub trait Sealed<T: Datum> {}
+}
+impl<T: Datum, U: AttrValue<T>> private::Sealed<T> for U {}

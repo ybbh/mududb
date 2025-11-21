@@ -9,34 +9,56 @@ use tracing::trace;
 // the following invocation of Notifier::notified, which after Notifier::notify_waiters called,
 // would return immediately
 #[derive(Clone)]
+pub struct NotifyWait {
+    inner: Arc<NotifyWaitInner>,
+}
+
+#[derive(Clone)]
 pub struct Notifier {
+    inner: Arc<NotifyWaitInner>,
+}
+
+#[derive(Clone)]
+pub struct Waiter {
+    inner: Arc<NotifyWaitInner>,
+}
+
+pub struct NotifyWaitInner {
     name: String,
-    inner: Arc<NotifyInner>,
+    notify: Notify,
+    is_notified: AtomicBool,
 }
 
-pub struct NotifyInner {
-    stop_notifier: Notify,
-    stopped: AtomicBool,
-}
-
-impl Default for Notifier {
+impl Default for NotifyWait {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Notifier {
+pub fn notify_wait() -> (Notifier, Waiter) {
+    NotifyWait::new_notify_wait()
+}
+
+impl NotifyWait {
+    pub fn new_notify_wait() -> (Notifier, Waiter) {
+        let inner = Arc::new(NotifyWaitInner::new());
+        (Notifier {
+            inner: inner.clone(),
+        },
+        Waiter {
+            inner
+        })
+    }
+
     pub fn new() -> Self {
         Self {
-            name: "".to_string(),
-            inner: Arc::new(NotifyInner::new()),
+            inner: Arc::new(NotifyWaitInner::new()),
         }
     }
 
     pub fn new_with_name(name: String) -> Self {
         Self {
-            name,
-            inner: Arc::new(NotifyInner::new()),
+            inner: Arc::new(NotifyWaitInner::new_with_name(name)),
         }
     }
 
@@ -45,56 +67,77 @@ impl Notifier {
     }
 
     pub async fn notified(&self) {
-        trace!("notified {}", self.name);
+        trace!("notified {}", self.inner.name);
         self.inner.notified().await;
-        trace!("notified {} done", self.name);
-    }
-
-    pub fn task_notify_all(&self) -> bool {
-        trace!("notify waiter {}", self.name);
-
-        self.inner.notify_all()
     }
 
     pub fn notify_all(&self) -> bool {
-        trace!("notify waiter {}", self.name);
-
+        trace!("notify waiter {}", self.inner.name);
         self.inner.notify_all()
     }
 }
 
-impl NotifyInner {
+impl NotifyWaitInner {
     fn new() -> Self {
+        Self::new_with_name(Default::default())
+    }
+
+    fn new_with_name(name: String) -> Self {
         Self {
-            stopped: AtomicBool::new(false),
-            stop_notifier: Notify::new(),
+            name,
+            is_notified: AtomicBool::new(false),
+            notify: Notify::new(),
         }
     }
 
     async fn notified(&self) {
-        if !self.stopped.load(Ordering::SeqCst) {
-            self.stop_notifier.notified().await;
+        if !self.is_notified.load(Ordering::SeqCst) {
+            self.notify.notified().await;
         }
     }
 
     fn is_notified(&self) -> bool {
-        self.stopped.load(Ordering::SeqCst)
+        self.is_notified.load(Ordering::SeqCst)
     }
 
     fn notify_all(&self) -> bool {
         let r = self
-            .stopped
+            .is_notified
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);
 
         match r {
             Ok(_) => {
-                self.stop_notifier.notify_waiters();
+                self.notify.notify_waiters();
                 true
             }
             Err(_) => {
-                self.stop_notifier.notify_waiters();
+                self.notify.notify_waiters();
                 false
             }
         }
+    }
+}
+
+
+impl Waiter {
+    pub async fn wait(&self) {
+        self.inner.notified().await;
+    }
+
+    pub fn into(self) -> NotifyWait {
+        NotifyWait {inner:self.inner}
+    }
+}
+
+impl Notifier {
+    pub fn is_notified(&self) -> bool {
+        self.inner.is_notified()
+    }
+    pub fn notify_all(&self) -> bool {
+        self.inner.notify_all()
+    }
+
+    pub fn into(self) -> NotifyWait {
+        NotifyWait {inner:self.inner}
     }
 }

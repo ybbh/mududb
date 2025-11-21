@@ -264,16 +264,18 @@ impl RuntimeSimple {
 
 #[cfg(test)]
 mod tests {
-    use crate::service::service::Service;
-    use crate::service::service_impl::create_runtime_service;
+    use crate::service::runtime::Runtime;
+    use crate::service::runtime_impl::create_runtime_service;
     use crate::service::test_wasm_mod_path::wasm_mod_path;
     use mudu::common::result::RS;
     use mudu::error::ec::EC;
     use mudu::m_error;
     use mudu::procedure::proc_param::ProcParam;
     use mudu::tuple::rs_tuple_datum::RsTupleDatum;
-    use mudu_utils::notifier::Notifier;
+    use mudu_utils::notifier::NotifyWait;
     use mudu_utils::task::{spawn_task, this_task_id};
+    use std::env::temp_dir;
+    use std::path::PathBuf;
     use std::sync::Arc;
 
     ///
@@ -291,11 +293,18 @@ mod tests {
             });
     }
 
-    async fn test_async_runtime_simple() -> RS<()> {
-        let path = wasm_mod_path();
-        let service = create_runtime_service(&path, &path).unwrap();
+    fn db_path() -> String {
+        let n = uuid::Uuid::new_v4().to_string();
+        let path = PathBuf::from(temp_dir()).join(format!("test_runtime_service_{}", n));
+        path.to_str().unwrap().to_string()
+    }
 
-        let stopper = Notifier::new();
+    async fn test_async_runtime_simple() -> RS<()> {
+        let pkg_path = wasm_mod_path();
+        let db_path = db_path();
+        let service = create_runtime_service(&pkg_path, &db_path, None).unwrap();
+
+        let stopper = NotifyWait::new();
         let task = spawn_task(stopper.clone(), "test session task", async move {
             async_session(service).await?;
             Ok(())
@@ -306,10 +315,10 @@ mod tests {
         opt.unwrap_or_else(|| Ok(()))
     }
 
-    async fn async_session(service: Arc<dyn Service>) -> RS<()> {
+    async fn async_session(service: Arc<dyn Runtime>) -> RS<()> {
         println!("task id {}", this_task_id());
         let tuple = (1i32, 100i64, "string argument".to_string());
-        let desc = <(i32, i64, String)>::tuple_desc_static();
+        let desc = <(i32, i64, String)>::tuple_desc_static(&[]);
         let params = ProcParam::from_tuple(0, tuple, &desc)?;
         let app_name = "app1".to_string();
         let app = service
@@ -317,7 +326,7 @@ mod tests {
             .ok_or_else(|| m_error!(EC::NoneErr, format!("no such app named {}", app_name)))?;
         let id = app.task_create()?;
         let proc_result = app.invoke(id, &"mod_0".to_string(), &"proc".to_string(), params)?;
-        let result = proc_result.to::<(i32, String)>(&<(i32, String)>::tuple_desc_static())?;
+        let result = proc_result.to::<(i32, String)>(&<(i32, String)>::tuple_desc_static(&[]))?;
         println!("result: {:?}", result);
         app.task_end(id)?;
         Ok(())

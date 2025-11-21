@@ -1,4 +1,4 @@
-use crate::tuple::dat_internal::DatInternal;
+use crate::data_type::dat_value::DatValue;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::error::Error;
@@ -19,13 +19,13 @@ impl Display for ErrCompare {
 
 impl Error for ErrCompare {}
 
-pub type FnHash = fn(&DatInternal, &mut dyn Hasher) -> Result<(), ErrCompare>;
+pub type FnHash = fn(&DatValue, &mut dyn Hasher) -> Result<(), ErrCompare>;
 
 /// `FnOrder` returns ordering result of a comparison between two internal values.
-pub type FnOrder = fn(&DatInternal, &DatInternal) -> Result<Ordering, ErrCompare>;
+pub type FnOrder = fn(&DatValue, &DatValue) -> Result<Ordering, ErrCompare>;
 
 /// `FnEqual` return equal result of a comparison between two internal values.
-pub type FnEqual = fn(&DatInternal, &DatInternal) -> Result<bool, ErrCompare>;
+pub type FnEqual = fn(&DatValue, &DatValue) -> Result<bool, ErrCompare>;
 
 pub struct FnCompare {
     pub order: FnOrder,

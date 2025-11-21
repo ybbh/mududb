@@ -3,9 +3,8 @@ use crate::error::ec::EC;
 use crate::m_error;
 use crate::tuple::datum_desc::DatumDesc;
 use crate::utils::json::binary_to_json;
+use crate::utils::json::{JsonMap, JsonValue};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use serde_json::map::Map;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TupleField {
@@ -29,31 +28,31 @@ impl TupleField {
         self.fields.get(n).cloned()
     }
 
-    pub fn to_json_value(&self, desc: &[DatumDesc]) -> RS<Value> {
+    pub fn to_json_value(&self, desc: &[DatumDesc]) -> RS<JsonValue> {
         if self.fields().len() != desc.len() {
             return Err(m_error!(
                 EC::DBInternalError,
                 format!(
-                    "expected {} fields but got {}",
+                    "to json value, expected {} fields but got {}",
                     desc.len(),
                     self.fields().len()
                 )
             ));
         }
-        let mut map = Map::with_capacity(self.fields().len());
+        let mut map = JsonMap::with_capacity(self.fields().len());
         for (i, field) in self.fields().iter().enumerate() {
             let d = &desc[i];
             let json_value = binary_to_json(field, d)?;
             map.insert(d.name().to_owned(), json_value);
         }
-        Ok(Value::Object(map))
+        Ok(JsonValue::Object(map))
     }
-    pub fn to_printable(&self, desc: &[DatumDesc]) -> RS<Vec<String>> {
+    pub fn to_textual(&self, desc: &[DatumDesc]) -> RS<Vec<String>> {
         if self.fields().len() != desc.len() {
             return Err(m_error!(
                 EC::DBInternalError,
                 format!(
-                    "expected {} fields but got {}",
+                    "to data printable, expected {} fields but got {}",
                     desc.len(),
                     self.fields().len()
                 )
@@ -63,9 +62,9 @@ impl TupleField {
         for (i, field) in self.fields().iter().enumerate() {
             let datum_desc = &desc[i];
             let id = datum_desc.dat_type_id();
-            let internal = id.fn_recv()(field, datum_desc.param_obj())
+            let (internal, _) = id.fn_recv()(field, datum_desc.dat_type())
                 .map_err(|e| m_error!(EC::TypeBaseErr, "convert binary to internal error", e))?;
-            let printable = id.fn_output()(&internal, datum_desc.param_obj())
+            let printable = id.fn_output()(&internal, datum_desc.dat_type())
                 .map_err(|e| m_error!(EC::TypeBaseErr, "convert internal to binary error", e))?;
             vec_string.push(printable.into())
         }

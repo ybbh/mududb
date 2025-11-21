@@ -14,14 +14,17 @@ MuduDB 是一款主要聚焦于 OLTP（联机事务处理）的数据库管理�
 
 
 ---
+
 ## 架构
 
 <img src="doc/pic/architecture.png" width="80%">
 
 ---
+
 ## [如何开始](doc/en/how_to_start.md)
 
 ---
+
 ## [创新特性](doc/cn/innovative.cn.md)
 
 ---

@@ -22,7 +22,7 @@ macro_rules! my_tracing_subscriber {
 }
 
 fn init_level_console(
-    level_filter:LevelFilter
+    level_filter: LevelFilter
 ) {
     let registry = tracing_subscriber::registry();
     let console_layer = console_subscriber::spawn();
@@ -34,7 +34,7 @@ fn init_level_console(
 }
 
 fn init_level(
-    level_filter:LevelFilter
+    level_filter: LevelFilter
 ) {
     let registry = tracing_subscriber::registry();
     registry
@@ -44,8 +44,8 @@ fn init_level(
 }
 
 fn init_level_env_console(
-    level_filter:LevelFilter,
-    env_filter:EnvFilter,
+    level_filter: LevelFilter,
+    env_filter: EnvFilter,
 ) {
     let registry = tracing_subscriber::registry();
     let console_layer = console_subscriber::spawn();
@@ -58,8 +58,8 @@ fn init_level_env_console(
 }
 
 fn init_level_env(
-    level_filter:LevelFilter,
-    env_filter:EnvFilter,
+    level_filter: LevelFilter,
+    env_filter: EnvFilter,
 ) {
     let registry = tracing_subscriber::registry();
     registry
@@ -80,7 +80,7 @@ fn _setup_with_console(level: &str, parse: &str, enable_console_layer: bool) {
         }
     };
 
-    if !parse.is_empty()  {
+    if !parse.is_empty() {
         let env_filter = EnvFilter::builder()
             .with_default_directive(level_filter.into())
             .parse(parse)

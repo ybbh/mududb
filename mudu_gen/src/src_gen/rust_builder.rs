@@ -2,13 +2,14 @@ use crate::src_gen::column_def::TableColumnDef;
 use crate::src_gen::src_builder::SrcBuilder;
 use crate::src_gen::table_def::TableDef;
 use mudu::common::result::RS;
-use mudu::data_type::dat_type::DatType;
-use mudu::data_type::dt_impl::dat_type_id::DatTypeID;
+use mudu::data_type::dat_prim::DatPrim;
+use mudu::data_type::dat_type_id::DatTypeID;
 use mudu::error::ec::EC;
 use mudu::error::err::MError;
 use mudu::m_error;
 use std::fmt;
 use std::fmt::Write;
+use tera::Tera;
 
 pub struct RustBuilder {}
 
@@ -45,19 +46,23 @@ fn print_indent(s: &str, indent_n: u32, writer: &mut dyn Write) -> RS<()> {
     }
     Ok(())
 }
-fn to_data_type(n: &DatType) -> RS<String> {
-    let s = match n.id() {
+
+fn to_data_type_str(id: DatTypeID) -> RS<String> {
+    let s = match id {
         DatTypeID::I32 => "i32".to_string(),
         DatTypeID::I64 => "i64".to_string(),
         DatTypeID::F32 => "f32".to_string(),
         DatTypeID::F64 => "f64".to_string(),
-        DatTypeID::CharFixedLen => "String".to_string(),
-        DatTypeID::CharVarLen => "String".to_string(),
+        DatTypeID::String => "String".to_string(),
+        _ => {
+            panic!("unsupported data type {:?}", id);
+        }
     };
     Ok(s)
 }
 
-fn is_basic_type(_n: &DatType) -> bool {
+
+fn is_basic_type(_n: &DatPrim) -> bool {
     true
 }
 
@@ -107,38 +112,24 @@ impl RustBuilder {
     }
 
     fn use_mod(&self, writer: &mut dyn Write) -> RS<()> {
+        let s_use_mod = r#"
+use lazy_static::lazy_static;
+use mudu::common::result::RS;
+use mudu::data_type::dat_binary::DatBinary;
+use mudu::data_type::dat_textual::DatTextual;
+use mudu::data_type::dat_type::DatType;
+use mudu::data_type::dat_type_id::DatTypeID;
+use mudu::data_type::dat_value::DatValue;
+use mudu::data_type::datum::{Datum, DatumDyn};
+use mudu::database::attr_field_access;
+use mudu::database::attr_value::AttrValue;
+use mudu::database::entity::Entity;
+use mudu::database::entity_utils;
+use mudu::tuple::datum_desc::DatumDesc;
+use mudu::tuple::tuple_field_desc::TupleFieldDesc;
+    "#;
         writer
-            .write_str("use lazy_static::lazy_static;\n")
-            .map_err(write_error)?;
-        // use mod declaration
-        writer
-            .write_str("use mudu::common::result::RS;\n")
-            .map_err(write_error)?;
-        writer
-            .write_str("use mudu::database::attr_value::AttrValue;\n")
-            .map_err(write_error)?;
-        writer
-            .write_str("use mudu::database::attr_binary::AttrBinary;\n")
-            .map_err(write_error)?;
-        writer
-            .write_str("use mudu::database::attr_set_get::{attr_set_binary, attr_get_binary};\n")
-            .map_err(write_error)?;
-        writer
-            .write_str("use mudu::database::record::Record;\n")
-            .map_err(write_error)?;
-        writer
-            .write_str(
-                "use mudu::database::record_convert_tuple::{record_to_tuple, record_from_tuple};\n",
-            )
-            .map_err(write_error)?;
-        writer
-            .write_str("use mudu::tuple::datum_convert::{datum_from_binary, datum_to_binary};\n")
-            .map_err(write_error)?;
-        writer
-            .write_str("use mudu::tuple::tuple_field::TupleField;\n")
-            .map_err(write_error)?;
-        writer
-            .write_str("use mudu::tuple::tuple_field_desc::TupleFieldDesc;\n")
+            .write_str(s_use_mod)
             .map_err(write_error)?;
         Ok(())
     }
@@ -167,6 +158,9 @@ impl RustBuilder {
         self.impl_object(table_def, &mut obj_impl)?;
         print_indent(&obj_impl, 1, writer)?;
 
+        let mut datum_impl = String::new();
+        self.impl_datum_trait(table_def, &mut datum_impl)?;
+        print_indent(&datum_impl, 1, writer)?;
         writer.write_str("\n").map_err(write_error)?;
 
         let mut impl_record_trait = String::new();
@@ -205,6 +199,8 @@ impl RustBuilder {
 
     fn object_struct(&self, def: &TableDef, writer: &mut dyn Write) -> RS<()> {
         let name = to_object_struct_name(def.table_name())?;
+        writer.write_fmt(format_args!("#[derive(Debug, Clone)]\n"))
+            .map_err(write_error)?;
         writer
             .write_fmt(format_args!("pub struct {name} {{\n"))
             .map_err(write_error)?;
@@ -252,13 +248,67 @@ impl RustBuilder {
         writer.write_str("}\n").map_err(write_error)?;
         Ok(())
     }
+    fn impl_datum_trait(&self, table_def:&TableDef, writer: &mut dyn Write) -> RS<()> {
+        let s = r#"
+impl Datum for {{entry_struct_name}} {
+    fn dat_type() -> &'static DatType {
+        lazy_static! {
+            static ref DAT_TYPE: DatType = entity_utils::entity_dat_type::<{{entry_struct_name}}>();
+        }
+        &DAT_TYPE
+    }
+
+    fn from_binary(binary: &[u8]) -> RS<Self> {
+        entity_utils::entity_from_binary(binary)
+    }
+
+    fn from_value(value: &DatValue) -> RS<Self> {
+        entity_utils::entity_from_value(value)
+    }
+
+    fn from_textual(textual: &str) -> RS<Self> {
+        entity_utils::entity_from_textual(textual)
+    }
+}
+
+impl DatumDyn for {{entry_struct_name}} {
+    fn dat_type_id(&self) -> RS<DatTypeID> {
+        entity_utils::entity_dat_type_id()
+    }
+
+    fn to_binary(&self, dat_type: &DatType) -> RS<DatBinary> {
+        entity_utils::entity_to_binary(self, dat_type)
+    }
+
+    fn to_textual(&self, dat_type: &DatType) -> RS<DatTextual> {
+        entity_utils::entity_to_textual(self, dat_type)
+    }
+
+    fn to_value(&self, dat_type: &DatType) -> RS<DatValue> {
+        entity_utils::entity_to_value(self, dat_type)
+    }
+
+    fn clone_boxed(&self) -> Box<dyn DatumDyn> {
+        entity_utils::entity_clone_boxed(self)
+    }
+}
+"#;
+        let entry_struct_name = to_object_struct_name(table_def.table_name())?;
+        let mut tera = Tera::default();
+        tera.add_raw_template("template", s).unwrap();
+        let mut context = tera::Context::new();
+        context.insert("entry_struct_name", &entry_struct_name);
+        let result = tera.render("template", &context).unwrap();
+        writer.write_fmt(format_args!("{}", result)).map_err(write_error)?;
+        Ok(())
+    }
 
     fn impl_record_trait(&self, table_def: &TableDef, writer: &mut dyn Write) -> RS<()> {
         let table_name = table_def.table_name();
         let struct_obj_name = to_object_struct_name(table_name)?;
-        // impl Record for XXX {
+        // impl Entity for XXX {
         writer
-            .write_fmt(format_args!("impl Record for {struct_obj_name} {{\n"))
+            .write_fmt(format_args!("impl Entity for {struct_obj_name} {{\n"))
             .map_err(write_error)?;
 
         let mut constructor_empty = String::new();
@@ -275,27 +325,27 @@ impl RustBuilder {
         print_indent(&fn_table_name, 1, writer)?;
         writer.write_str("\n").map_err(write_error)?;
 
-        let mut fn_from_tuple = String::new();
-        self.impl_record_fn_from_tuple(&mut fn_from_tuple)?;
-        print_indent(&fn_from_tuple, 1, writer)?;
-        writer.write_str("\n").map_err(write_error)?;
-
-        let mut fn_to_tuple = String::new();
-        self.impl_record_fn_to_tuple(table_def, &mut fn_to_tuple)?;
-        print_indent(&fn_to_tuple, 1, writer)?;
-        writer.write_str("\n").map_err(write_error)?;
-
         let mut fn_get = String::new();
-        self.impl_record_fn_get(table_def, &mut fn_get)?;
+        self.impl_record_fn_get_binary(table_def, &mut fn_get)?;
         print_indent(&fn_get, 1, writer)?;
 
         writer.write_str("\n").map_err(write_error)?;
 
         let mut fn_set = String::new();
-        self.impl_record_fn_set(table_def, &mut fn_set)?;
+        self.impl_record_fn_set_binary(table_def, &mut fn_set)?;
         print_indent(&fn_set, 1, writer)?;
 
-        // } end impl Record for XXX {
+        let mut fn_get = String::new();
+        self.impl_record_fn_get_value(table_def, &mut fn_get)?;
+        print_indent(&fn_get, 1, writer)?;
+
+        writer.write_str("\n").map_err(write_error)?;
+
+        let mut fn_set = String::new();
+        self.impl_record_fn_set_value(table_def, &mut fn_set)?;
+        print_indent(&fn_set, 1, writer)?;
+        
+        // } end impl Entity for XXX {
         writer
             .write_fmt(format_args!("}}\n"))
             .map_err(write_error)?;
@@ -342,7 +392,7 @@ impl RustBuilder {
     fn impl_record_fn_table_name(&self, table_name: &String, writer: &mut dyn Write) -> RS<()> {
         let table_name_const = to_table_name_const(table_name);
         writer
-            .write_fmt(format_args!("fn table_name() -> &'static str {{\n"))
+            .write_fmt(format_args!("fn object_name() -> &'static str {{\n"))
             .map_err(write_error)?;
         writer
             .write_fmt(format_args!("\t{table_name_const}\n"))
@@ -353,40 +403,10 @@ impl RustBuilder {
         Ok(())
     }
 
-    fn impl_record_fn_from_tuple(&self, writer: &mut dyn Write) -> RS<()> {
-        writer.write_fmt(format_args!("fn from_tuple<T: AsRef<TupleField>, D: AsRef<TupleFieldDesc>>(row: T, desc: D) -> RS<Self>{{\n"))
-            .map_err(write_error)?;
+    fn impl_record_fn_get_binary(&self, table_def: &TableDef, writer: &mut dyn Write) -> RS<()> {
         writer
             .write_fmt(format_args!(
-                "\trecord_from_tuple::<Self, T, D>(row, desc)\n"
-            ))
-            .map_err(write_error)?;
-        writer
-            .write_fmt(format_args!("}}\n"))
-            .map_err(write_error)?;
-
-        Ok(())
-    }
-
-    fn impl_record_fn_to_tuple(&self, _table_def: &TableDef, writer: &mut dyn Write) -> RS<()> {
-        writer
-            .write_fmt(format_args!(
-                "fn to_tuple<D: AsRef<TupleFieldDesc>>(&self, desc: D) -> RS<TupleField> {{\n"
-            ))
-            .map_err(write_error)?;
-        writer
-            .write_fmt(format_args!("\trecord_to_tuple(self, desc)\n"))
-            .map_err(write_error)?;
-        writer
-            .write_fmt(format_args!("}}\n"))
-            .map_err(write_error)?;
-        Ok(())
-    }
-
-    fn impl_record_fn_get(&self, table_def: &TableDef, writer: &mut dyn Write) -> RS<()> {
-        writer
-            .write_fmt(format_args!(
-                "fn get_binary(&self, column:&str) -> RS<Option<Vec<u8>>> {{\n"
+                "fn get_field_binary(&self, column:&str) -> RS<Option<Vec<u8>>> {{\n"
             ))
             .map_err(write_error)?;
 
@@ -403,7 +423,7 @@ impl RustBuilder {
                 .map_err(write_error)?;
 
             writer
-                .write_fmt(format_args!("\t\t\tattr_get_binary(&self.{field_name})\n"))
+                .write_fmt(format_args!("\t\t\tattr_field_access::attr_get_binary::<_>(&self.{field_name})\n"))
                 .map_err(write_error)?;
 
             writer
@@ -426,10 +446,52 @@ impl RustBuilder {
         Ok(())
     }
 
-    fn impl_record_fn_set(&self, table_def: &TableDef, writer: &mut dyn Write) -> RS<()> {
+    fn impl_record_fn_get_value(&self, table_def: &TableDef, writer: &mut dyn Write) -> RS<()> {
         writer
             .write_fmt(format_args!(
-                "fn set_binary<B:AsRef<[u8]>>(&mut self, column:&str, binary:B) -> RS<()> {{\n"
+                "fn get_field_value(&self, column:&str) -> RS<Option<DatValue>> {{\n"
+            ))
+            .map_err(write_error)?;
+
+        // let datum = match column {
+        writer
+            .write_fmt(format_args!("\tmatch column {{\n"))
+            .map_err(write_error)?;
+        for column in table_def.table_columns() {
+            let name = column.column_name();
+            let column_name_const = to_column_name_const(name);
+            let field_name = to_struct_field_name(name)?;
+            writer
+                .write_fmt(format_args!("\t\t{column_name_const} => {{\n"))
+                .map_err(write_error)?;
+
+            writer
+                .write_fmt(format_args!("\t\t\tattr_field_access::attr_get_value::<_>(&self.{field_name})\n"))
+                .map_err(write_error)?;
+
+            writer
+                .write_fmt(format_args!("\t\t}}\n"))
+                .map_err(write_error)?;
+        }
+
+        writer
+            .write_fmt(format_args!("\t\t_ => {{ panic!(\"unknown name\"); }}\n"))
+            .map_err(write_error)?;
+
+        // }; END match column {
+        writer
+            .write_fmt(format_args!("\t}}\n"))
+            .map_err(write_error)?;
+
+        writer
+            .write_fmt(format_args!("}}\n"))
+            .map_err(write_error)?;
+        Ok(())
+    }
+    fn impl_record_fn_set_binary(&self, table_def: &TableDef, writer: &mut dyn Write) -> RS<()> {
+        writer
+            .write_fmt(format_args!(
+                "fn set_field_binary<B:AsRef<[u8]>>(&mut self, column:&str, binary:B) -> RS<()> {{\n"
             ))
             .map_err(write_error)?;
         // match column {{
@@ -445,7 +507,53 @@ impl RustBuilder {
                 .map_err(write_error)?;
             writer
                 .write_fmt(format_args!(
-                    "\t\t\tattr_set_binary(&mut self.{field_name}, binary.as_ref())?;\n"
+                    "\t\t\tattr_field_access::attr_set_binary::<_, _>(&mut self.{field_name}, binary.as_ref())?;\n"
+                ))
+                .map_err(write_error)?;
+
+            writer
+                .write_fmt(format_args!("\t\t}}\n"))
+                .map_err(write_error)?;
+        }
+
+        writer
+            .write_fmt(format_args!("\t\t_ => {{ panic!(\"unknown name\"); }}\n"))
+            .map_err(write_error)?;
+
+        // } END match column {{
+        writer
+            .write_fmt(format_args!("\t}}\n"))
+            .map_err(write_error)?;
+
+        writer
+            .write_fmt(format_args!("\tOk(())\n"))
+            .map_err(write_error)?;
+        writer
+            .write_fmt(format_args!("}}\n"))
+            .map_err(write_error)?;
+        Ok(())
+    }
+
+    fn impl_record_fn_set_value(&self, table_def: &TableDef, writer: &mut dyn Write) -> RS<()> {
+        writer
+            .write_fmt(format_args!(
+                "fn set_field_value<B:AsRef<DatValue>>(&mut self, column:&str, value:B) -> RS<()> {{\n"
+            ))
+            .map_err(write_error)?;
+        // match column {{
+        writer
+            .write_fmt(format_args!("\tmatch column {{\n"))
+            .map_err(write_error)?;
+        for column in table_def.table_columns() {
+            let name = column.column_name();
+            let column_name_const = to_column_name_const(name);
+            let field_name = to_struct_field_name(name)?;
+            writer
+                .write_fmt(format_args!("\t\t{column_name_const} => {{\n"))
+                .map_err(write_error)?;
+            writer
+                .write_fmt(format_args!(
+                    "\t\t\tattr_field_access::attr_set_value::<_, _>(&mut self.{field_name}, value)?;\n"
                 ))
                 .map_err(write_error)?;
 
@@ -481,7 +589,7 @@ impl RustBuilder {
         let pub_str = if !is_empty {
             "pub "
         } else {
-            // impl Record trait
+            // impl Entity trait
             ""
         };
         let constructor_name = if is_empty { "new_empty" } else { "new" };
@@ -491,9 +599,9 @@ impl RustBuilder {
         if !is_empty {
             for column_def in table_def.table_columns() {
                 let field_name = to_struct_field_name(column_def.column_name())?;
-                let object_name = to_attr_struct_name(column_def.column_name())?;
+                let data_type = to_data_type_str(column_def.dat_type().dat_type_id())?;
                 writer
-                    .write_fmt(format_args!("\t{field_name}:{object_name},\n"))
+                    .write_fmt(format_args!("\t{field_name}:Option<{data_type}>,\n"))
                     .map_err(write_error)?;
             }
         }
@@ -518,7 +626,7 @@ impl RustBuilder {
             for column_def in table_def.table_columns() {
                 let field_name = to_struct_field_name(column_def.column_name())?;
                 writer
-                    .write_fmt(format_args!("\t\t{field_name}:Some({field_name}),\n"))
+                    .write_fmt(format_args!("\t\t{field_name},\n"))
                     .map_err(write_error)?;
             }
 
@@ -538,7 +646,7 @@ impl RustBuilder {
 
     fn build_field(&self, column_def: &TableColumnDef, writer: &mut dyn Write) -> RS<()> {
         let field_name = to_struct_field_name(column_def.column_name())?;
-        let data_type = to_attr_struct_name(&column_def.column_name())?;
+        let data_type = to_data_type_str(column_def.dat_type().dat_type_id())?;
         writer
             .write_fmt(format_args!("{field_name} : Option<{data_type}>,\n"))
             .map_err(write_error)?;
@@ -547,7 +655,7 @@ impl RustBuilder {
 
     fn build_setter(&self, column_def: &TableColumnDef, writer: &mut dyn Write) -> RS<()> {
         let field_name = to_struct_field_name(column_def.column_name())?;
-        let data_type = to_attr_struct_name(&column_def.column_name())?;
+        let data_type = to_data_type_str(column_def.dat_type().dat_type_id())?;
         writer
             .write_fmt(format_args!("pub fn set_{field_name}(\n"))
             .map_err(write_error)?;
@@ -571,7 +679,7 @@ impl RustBuilder {
 
     fn build_getter(&self, column_def: &TableColumnDef, writer: &mut dyn Write) -> RS<()> {
         let field_name = to_struct_field_name(column_def.column_name())?;
-        let data_type = to_attr_struct_name(column_def.column_name())?;
+        let data_type = to_data_type_str(column_def.dat_type().dat_type_id())?;
         writer
             .write_fmt(format_args!("pub fn get_{field_name}(\n"))
             .map_err(write_error)?;
@@ -609,43 +717,17 @@ impl RustBuilder {
     ) -> RS<()> {
         let column_name = column_def.column_name();
         let attr_obj_name = to_attr_struct_name(column_name)?;
-
+        let data_type = to_data_type_str(column_def.dat_type().dat_type_id())?;
         // pub struct AttrXXX {
         writer
             .write_fmt(format_args!("pub struct {attr_obj_name} {{\n"))
             .map_err(write_error)?;
-        let data_type = to_data_type(&column_def.data_type())?;
-        let field_name = "value".to_string();
         writer
-            .write_fmt(format_args!("\t{field_name} : {data_type}, \n"))
+            .write_fmt(format_args!("}}\n"))
             .map_err(write_error)?;
-
+        writer.write_fmt(format_args!("\n")).map_err(write_error)?;
         // }
-        writer
-            .write_fmt(format_args!("}}\n"))
-            .map_err(write_error)?;
-        writer.write_fmt(format_args!("\n")).map_err(write_error)?;
 
-        // impl Object
-        writer
-            .write_fmt(format_args!("impl {attr_obj_name} {{\n"))
-            .map_err(write_error)?;
-        writer
-            .write_fmt(format_args!("}}\n"))
-            .map_err(write_error)?;
-        writer.write_fmt(format_args!("\n")).map_err(write_error)?;
-
-        // impl AttrBinary trait
-        writer
-            .write_fmt(format_args!("impl AttrBinary for {attr_obj_name} {{\n"))
-            .map_err(write_error)?;
-        let mut attr_trait_fn = String::new();
-        self.build_attr_datum_trait_fn(column_def, &mut attr_trait_fn)?;
-        print_indent(&attr_trait_fn, 1, writer)?;
-        writer
-            .write_fmt(format_args!("}}\n"))
-            .map_err(write_error)?;
-        writer.write_fmt(format_args!("\n")).map_err(write_error)?;
 
         // impl AttrValue trait
         writer
@@ -654,7 +736,7 @@ impl RustBuilder {
             ))
             .map_err(write_error)?;
         let mut attr_trait_fn = String::new();
-        self.build_attr_trait_fn(&data_type, table_name, column_def, &mut attr_trait_fn)?;
+        self.build_attr_trait_fn(table_name, column_def, &mut attr_trait_fn)?;
         print_indent(&attr_trait_fn, 1, writer)?;
         writer
             .write_fmt(format_args!("}}\n"))
@@ -663,52 +745,71 @@ impl RustBuilder {
         Ok(())
     }
 
-    fn build_attr_datum_trait_fn(
-        &self,
-        column_def: &TableColumnDef,
-        writer: &mut dyn Write,
-    ) -> RS<()> {
-        let dat_type_str = to_data_type(column_def.data_type())?;
-        self.build_attr_datum_fn_get_datum(writer)?;
-        writer.write_str("\n").map_err(write_error)?;
-        self.build_attr_datum_fn_set_datum(&dat_type_str, writer)?;
-        writer.write_str("\n").map_err(write_error)?;
-        Ok(())
-    }
-
     fn build_attr_trait_fn(
         &self,
-        data_type: &String,
         table_name: &String,
         column_def: &TableColumnDef,
         writer: &mut dyn Write,
     ) -> RS<()> {
+        let data_type = to_data_type_str(column_def.dat_type().dat_type_id())?;
         let column_name = column_def.column_name();
-        self.build_attr_fn_new(data_type, writer)?;
         writer.write_str("\n").map_err(write_error)?;
-        self.build_attr_fn_from_binary(
-            column_def.data_type().id(),
-            column_def.is_not_null(),
-            writer,
-        )?;
+        self.build_attr_fn_dat_type(&data_type, writer)?;
+        writer.write_str("\n").map_err(write_error)?;
+        self.build_attr_fn_datum_desc(column_name, &data_type, writer)?;
         writer.write_str("\n").map_err(write_error)?;
         self.build_attr_fn_table_name(table_name, writer)?;
         writer.write_str("\n").map_err(write_error)?;
+
         self.build_attr_fn_column_name(column_name, writer)?;
-        writer.write_str("\n").map_err(write_error)?;
-        let data_type = to_data_type(&column_def.data_type())?;
-        self.build_attr_fn_get_value(&data_type, writer)?;
-        writer.write_str("\n").map_err(write_error)?;
-        self.build_attr_fn_set_value(&data_type, writer)?;
         writer.write_str("\n").map_err(write_error)?;
 
         Ok(())
     }
 
+    fn build_attr_fn_dat_type(&self, _data_type_str: &String, writer: &mut dyn Write) -> RS<()> {
+        writer
+            .write_fmt(format_args!("fn dat_type() -> &'static DatType {{\n"))
+            .map_err(write_error)?;
+
+        writer
+            .write_fmt(format_args!(
+                "\t\tstatic ONCE_LOCK:std::sync::OnceLock<DatType> = std::sync::OnceLock::new();\n"))
+            .map_err(write_error)?;
+        writer.write_fmt(format_args!(" ONCE_LOCK.get_or_init(||{{ Self::attr_dat_type() }})\n"
+        ))
+            .map_err(write_error)?;
+
+        writer
+            .write_fmt(format_args!("}}\n"))
+            .map_err(write_error)?;
+        Ok(())
+    }
+
+    fn build_attr_fn_datum_desc(&self, _column_name: &String, _data_type_str: &String, writer: &mut dyn Write) -> RS<()> {
+        writer
+            .write_fmt(format_args!("fn datum_desc() -> &'static DatumDesc {{\n"))
+            .map_err(write_error)?;
+
+
+        writer
+            .write_fmt(format_args!(
+                "\t\tstatic ONCE_LOCK:std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();\n"))
+            .map_err(write_error)?;
+        writer.write_fmt(format_args!(" ONCE_LOCK.get_or_init(||{{ Self::attr_datum_desc() }})\n"
+        ))
+            .map_err(write_error)?;
+        writer
+            .write_fmt(format_args!("}}\n"))
+            .map_err(write_error)?;
+        Ok(())
+    }
+
+
     fn build_attr_fn_table_name(&self, table_name: &String, writer: &mut dyn Write) -> RS<()> {
         let table_name_const = to_table_name_const(table_name);
         writer
-            .write_fmt(format_args!("fn table_name() -> &'static str {{\n"))
+            .write_fmt(format_args!("fn object_name() -> &'static str {{\n"))
             .map_err(write_error)?;
         writer
             .write_fmt(format_args!("\t{table_name_const}\n"))
@@ -722,7 +823,7 @@ impl RustBuilder {
     fn build_attr_fn_column_name(&self, column_name: &String, writer: &mut dyn Write) -> RS<()> {
         let column_name_const = to_column_name_const(column_name);
         writer
-            .write_fmt(format_args!("fn column_name() -> &'static str {{\n"))
+            .write_fmt(format_args!("fn attr_name() -> &'static str {{\n"))
             .map_err(write_error)?;
         writer
             .write_fmt(format_args!("\t{column_name_const}\n"))
@@ -730,108 +831,6 @@ impl RustBuilder {
         writer
             .write_fmt(format_args!("}}\n"))
             .map_err(write_error)?;
-        Ok(())
-    }
-
-    fn build_attr_fn_new(&self, type_str: &String, writer: &mut dyn Write) -> RS<()> {
-        writer
-            .write_fmt(format_args!("fn new(datum:{}) -> Self {{\n", type_str))
-            .map_err(write_error)?;
-        writer
-            .write_fmt(format_args!("\tSelf {{ value : datum }}\n"))
-            .map_err(write_error)?;
-        writer
-            .write_fmt(format_args!("}}\n"))
-            .map_err(write_error)?;
-        Ok(())
-    }
-
-    fn build_attr_fn_from_binary(
-        &self,
-        _type_id: DatTypeID,
-        _not_null: bool,
-        writer: &mut dyn Write,
-    ) -> RS<()> {
-        writer
-            .write_fmt(format_args!(
-                "fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {{\n"
-            ))
-            .map_err(write_error)?;
-        writer
-            .write_fmt(format_args!(
-                "\tOk(Self::new(datum_from_binary(binary)?))\n"
-            ))
-            .map_err(write_error)?;
-        writer
-            .write_fmt(format_args!("}}\n"))
-            .map_err(write_error)?;
-        Ok(())
-    }
-
-    fn build_attr_datum_fn_set_datum(
-        &self,
-        dat_type_str: &String,
-        writer: &mut dyn Write,
-    ) -> RS<()> {
-        writer
-            .write_fmt(format_args!(
-                "fn set_binary<D:AsRef<[u8]>>(&mut self, binary:D) -> RS<()> {{\n"
-            ))
-            .map_err(write_error)?;
-        writer
-            .write_fmt(format_args!(
-                "\tlet value:{} = datum_from_binary(binary.as_ref())?;\n",
-                dat_type_str
-            ))
-            .map_err(write_error)?;
-        writer
-            .write_fmt(format_args!("\tself.set_value(value);\n"))
-            .map_err(write_error)?;
-        writer
-            .write_fmt(format_args!("\tOk(())\n"))
-            .map_err(write_error)?;
-        writer
-            .write_fmt(format_args!("}}\n"))
-            .map_err(write_error)?;
-        Ok(())
-    }
-
-    fn build_attr_datum_fn_get_datum(&self, writer: &mut dyn Write) -> RS<()> {
-        writer
-            .write_fmt(format_args!("fn get_binary(&self) -> RS<Vec<u8>> {{\n"))
-            .map_err(write_error)?;
-        writer
-            .write_fmt(format_args!("\t datum_to_binary(&self.value)"))
-            .map_err(write_error)?;
-        writer
-            .write_fmt(format_args!("}}\n"))
-            .map_err(write_error)?;
-        Ok(())
-    }
-
-    fn build_attr_fn_set_value(&self, data_type: &String, writer: &mut dyn Write) -> RS<()> {
-        writer
-            .write_fmt(format_args!(
-                "fn set_value(&mut self, value : {data_type}) {{\n"
-            ))
-            .map_err(write_error)?;
-
-        writer
-            .write_fmt(format_args!("\tself.value = value;\n"))
-            .map_err(write_error)?;
-
-        writer.write_str("}\n").map_err(write_error)?;
-        Ok(())
-    }
-
-    fn build_attr_fn_get_value(&self, data_type: &String, writer: &mut dyn Write) -> RS<()> {
-        writer
-            .write_fmt(format_args!("fn get_value(&self) -> {data_type} {{\n"))
-            .map_err(write_error)?;
-        writer
-            .write_fmt(format_args!("\tself.value.clone()\n"))
-            .map_err(write_error)?;
-        writer.write_str("}\n").map_err(write_error)?;
         Ok(())
     }
 }

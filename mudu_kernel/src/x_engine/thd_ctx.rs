@@ -12,7 +12,6 @@ use crate::contract::data_row::DataRow;
 use crate::contract::schema_table::SchemaTable;
 use crate::contract::table_desc::TableDesc;
 use crate::storage::pst_op_ch::PstOpCh;
-use crate::sync::notify_wait::create_notify_wait;
 use crate::tx::tx_ctx::TxCtx;
 use crate::x_engine::api::{
     AlterTable,
@@ -38,6 +37,7 @@ use mudu::m_error;
 use mudu::tuple::build_tuple::build_tuple;
 use mudu::tuple::tuple_binary::TupleBinary as TupleRaw;
 use mudu::tuple::update_tuple::update_tuple;
+use mudu_utils::sync::notify_wait::create_notify_wait;
 use mudu_utils::task_trace;
 use scc::HashMap;
 

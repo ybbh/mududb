@@ -51,7 +51,7 @@ impl TableDef {
     pub fn row_desc(&self) -> TupleFieldDesc {
         let mut vec = vec![];
         for c in &self.table_columns {
-            let dd = DatumDesc::new(c.column_name().clone(), c.data_type().clone());
+            let dd = DatumDesc::new(c.column_name().clone(), c.dat_type().clone());
             vec.push(dd);
         }
         TupleFieldDesc::new(vec)

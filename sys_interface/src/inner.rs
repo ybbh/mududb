@@ -3,8 +3,8 @@ use mudu::common::endian::read_u32;
 use mudu::common::result::RS;
 use mudu::common::serde_utils::{deserialize_sized_from, serialize_sized_to_vec};
 use mudu::common::xid::XID;
-use mudu::database::record::Record;
-use mudu::database::record_set::RecordSet;
+use mudu::database::entity::Entity;
+use mudu::database::entity_set::RecordSet;
 use mudu::database::result_set::ResultSet;
 use mudu::database::sql_params::SQLParams;
 use mudu::database::sql_stmt::SQLStmt;
@@ -17,13 +17,13 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::sync::Arc;
 
-pub fn inner_query<R: Record>(
+pub fn inner_query<R: Entity>(
     xid: XID,
     sql: &dyn SQLStmt,
     params: &dyn SQLParams,
 ) -> RS<RecordSet<R>> {
-    let tuple_desc = params.tuple_desc()?;
-    let vec_bin = params.to_binary(tuple_desc.fields())?;
+    let tuple_desc = params.param_tuple_desc()?;
+    let vec_bin = params.param_to_binary(tuple_desc.fields())?;
     let str_sql = sql.to_string();
     let query_in = QueryIn::new(
         xid,
@@ -43,8 +43,8 @@ pub fn inner_command(
     sql: &dyn SQLStmt,
     params: &dyn SQLParams,
 ) -> RS<u64> {
-    let tuple_desc = params.tuple_desc()?;
-    let vec_bin = params.to_binary(tuple_desc.fields())?;
+    let tuple_desc = params.param_tuple_desc()?;
+    let vec_bin = params.param_to_binary(tuple_desc.fields())?;
     let str_sql = sql.to_string();
     let command_in = CommandIn::new(
         xid,
@@ -132,8 +132,8 @@ fn __sys_call<
     let param = serialize_sized_to_vec(param)?;
     let mut out_mem = OutMemory::default();
     let ret_value = {
-        let mut out_mem_len = [0u8;size_of::<u32>()];
-        let mut out_mem_id = [0u8;size_of::<u32>()];
+        let mut out_mem_len = [0u8; size_of::<u32>()];
+        let mut out_mem_id = [0u8; size_of::<u32>()];
         let n = sys_fn(
             param.as_ptr(), param.len(),
             out_mem.slice_mut().as_mut_ptr(),

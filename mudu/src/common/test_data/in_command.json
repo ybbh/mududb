@@ -83,47 +83,43 @@
     "fields": [
       {
         "dat_type": {
-          "id": "CharFixedLen",
-          "type_param": [
-            "65536"
-          ]
+          "id": "String",
+          "param": "{\"length\":65536}"
         },
         "name": "v_0"
       },
       {
         "dat_type": {
-          "id": "CharFixedLen",
-          "type_param": [
-            "65536"
-          ]
+          "id": "String",
+          "param": "{\"length\":65536}"
         },
         "name": "v_1"
       },
       {
         "dat_type": {
           "id": "I32",
-          "type_param": []
+          "param": ""
         },
         "name": "v_2"
       },
       {
         "dat_type": {
           "id": "I32",
-          "type_param": []
+          "param": ""
         },
         "name": "v_3"
       },
       {
         "dat_type": {
           "id": "I32",
-          "type_param": []
+          "param": ""
         },
         "name": "v_4"
       },
       {
         "dat_type": {
           "id": "I64",
-          "type_param": []
+          "param": ""
         },
         "name": "v_5"
       }

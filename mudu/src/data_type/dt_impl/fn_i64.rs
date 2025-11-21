@@ -1,40 +1,66 @@
 use crate::common::endian::Endian;
+use crate::data_type::dat_binary::DatBinary;
+use crate::data_type::dat_json::DatJson;
+use crate::data_type::dat_textual::DatTextual;
+use crate::data_type::dat_type::DatType;
+use crate::data_type::dat_value::DatValue;
 use crate::data_type::dt_fn_compare::{ErrCompare, FnCompare};
 use crate::data_type::dt_fn_convert::{ErrFnBase, FnBase};
-use crate::data_type::dt_impl::dat_typed::DatTyped;
-use crate::data_type::param_obj::ParamObj;
-use crate::tuple::dat_binary::DatBinary;
-use crate::tuple::dat_internal::DatInternal;
-use crate::tuple::dat_printable::DatPrintable;
+use crate::json_value;
+use crate::utils::json::{from_json_str, JsonValue};
 use byteorder::ByteOrder;
 use std::cmp::Ordering;
 use std::hash::Hasher;
 
-pub fn fn_i64_in(v: &DatPrintable, _p: &ParamObj) -> Result<DatInternal, ErrFnBase> {
-    let r_i = v.str().parse::<i64>();
-    let i = r_i.map_err(|e| ErrFnBase::ErrTypeConvert(e.to_string()))?;
-    Ok(DatInternal::from_i64(i))
+fn fn_i64_in_textual(v: &str, _dt: &DatType) -> Result<DatValue, ErrFnBase> {
+    let json = from_json_str::<JsonValue>(v).map_err(|e| {
+        ErrFnBase::ErrTypeConvert(e.to_string())
+    })?;
+    fn_i64_in_json(&DatJson::from(json), _dt)
 }
 
-pub fn fn_i64_out(v: &DatInternal, _p: &ParamObj) -> Result<DatPrintable, ErrFnBase> {
+fn fn_i64_out_textual(v: &DatValue, _dt: &DatType) -> Result<DatTextual, ErrFnBase> {
+    let json = fn_i64_out_json(v, _dt)?;
+    Ok(DatTextual::from(json.to_string()))
+}
+
+fn fn_i64_in_json(v: &JsonValue, _: &DatType) -> Result<DatValue, ErrFnBase> {
+    let opt_num = v.as_number();
+    let opt_f64 = match opt_num {
+        Some(num) => num.as_i64(),
+        None => { return Err(ErrFnBase::ErrTypeConvert(format!("cannot convert json {} to i64", v.to_string()))) }
+    };
+    match opt_f64 {
+        Some(num) => Ok(DatValue::from_i64(num)),
+        None => { Err(ErrFnBase::ErrTypeConvert(format!("cannot convert json {} to i64", v.to_string()))) }
+    }
+}
+
+fn fn_i64_out_json(v: &DatValue, _: &DatType) -> Result<DatJson, ErrFnBase> {
     let i = v.to_i64();
-    Ok(DatPrintable::from(i.to_string()))
+    let json = json_value!(i);
+    Ok(DatJson::from(json))
 }
 
-pub fn fn_i64_len(_opt_param: &ParamObj) -> Option<usize> {
-    Some(size_of::<i64>())
+fn fn_i64_len(_: &DatType) -> Result<Option<u32>, ErrFnBase> {
+    Ok(Some(size_of::<i64>() as u32))
 }
 
-pub fn fn_i64_send(v: &DatInternal, _p: &ParamObj) -> Result<DatBinary, ErrFnBase> {
+
+fn fn_i64_dat_output_len(_: &DatValue, _ty: &DatType) -> Result<u32, ErrFnBase> {
+    Ok(fn_i64_len(_ty)?.unwrap())
+}
+
+fn fn_i64_send(v: &DatValue, _: &DatType) -> Result<DatBinary, ErrFnBase> {
     let i = v.to_i64();
     let mut buf = vec![0; size_of_val(&i)];
     Endian::write_i64(&mut buf, i);
     Ok(DatBinary::from(buf))
 }
 
-pub fn fn_i64_send_to(v: &DatInternal, _p: &ParamObj, buf: &mut [u8]) -> Result<usize, ErrFnBase> {
+fn fn_i64_send_to(v: &DatValue, _: &DatType, buf: &mut [u8]) -> Result<u32, ErrFnBase> {
     let i = v.to_i64();
-    let len = size_of_val(&i);
+    let len = size_of_val(&i) as u32;
     if size_of_val(&i) < buf.len() {
         return Err(ErrFnBase::ErrLowBufSpace(len));
     }
@@ -42,44 +68,31 @@ pub fn fn_i64_send_to(v: &DatInternal, _p: &ParamObj, buf: &mut [u8]) -> Result<
     Ok(len)
 }
 
-pub fn fn_i64_recv(buf: &[u8], _p: &ParamObj) -> Result<DatInternal, ErrFnBase> {
+fn fn_i64_recv(buf: &[u8], _: &DatType) -> Result<(DatValue, u32), ErrFnBase> {
     if size_of::<i64>() < buf.len() {
-        return Err(ErrFnBase::ErrLowBufSpace(size_of::<i64>()));
+        return Err(ErrFnBase::ErrLowBufSpace(size_of::<i64>() as _));
     };
     let i = Endian::read_i64(buf);
-    Ok(DatInternal::from_i64(i))
+    Ok((DatValue::from_i64(i), size_of::<i64>() as u32))
 }
 
-pub fn fn_i64_to_typed(v: &DatInternal, _p: &ParamObj) -> Result<DatTyped, ErrFnBase> {
-    Ok(DatTyped::I64(v.to_i64()))
+
+fn fn_i64_default(_: &DatType) -> Result<DatValue, ErrFnBase> {
+    Ok(DatValue::from_i64(i64::default()))
 }
 
-pub fn fn_i64_default(_p: &ParamObj) -> Result<DatInternal, ErrFnBase> {
-    Ok(DatInternal::from_i64(i64::default()))
-}
 
-pub fn fn_i64_from_typed(v: &DatTyped, _p: &ParamObj) -> Result<DatInternal, ErrFnBase> {
-    match v {
-        DatTyped::I32(i) => Ok(DatInternal::from_i64(*i as i64)),
-        DatTyped::I64(i) => Ok(DatInternal::from_i64(*i)),
-        _ => Err(ErrFnBase::ErrTypeConvert(format!(
-            "cannot convert {:?} to i64",
-            v
-        ))),
-    }
-}
-
-/// `FnOrder` returns ordering result of a comparison between two internal values.
-pub fn fn_i64_order(v1: &DatInternal, v2: &DatInternal) -> Result<Ordering, ErrCompare> {
+/// `FnOrder` returns ordering result of a comparison between two object values.
+fn fn_i64_order(v1: &DatValue, v2: &DatValue) -> Result<Ordering, ErrCompare> {
     Ok(v1.to_i64().cmp(&v2.to_i64()))
 }
 
-/// `FnEqual` return equal result of a comparison between two internal values.
-pub fn fn_i64_equal(v1: &DatInternal, v2: &DatInternal) -> Result<bool, ErrCompare> {
+/// `FnEqual` return equal result of a comparison between two object values.
+fn fn_i64_equal(v1: &DatValue, v2: &DatValue) -> Result<bool, ErrCompare> {
     Ok(v1.to_i64().eq(&v2.to_i64()))
 }
 
-pub fn fn_i64_hash(v: &DatInternal, hasher: &mut dyn Hasher) -> Result<(), ErrCompare> {
+fn fn_i64_hash(v: &DatValue, hasher: &mut dyn Hasher) -> Result<(), ErrCompare> {
     hasher.write_i64(v.to_i64());
     Ok(())
 }
@@ -91,13 +104,14 @@ pub const FN_I64_COMPARE: FnCompare = FnCompare {
 };
 
 pub const FN_I64_CONVERT: FnBase = FnBase {
-    input: fn_i64_in,
-    output: fn_i64_out,
-    len: fn_i64_len,
-    recv: fn_i64_recv,
+    input_textual: fn_i64_in_textual,
+    output_textual: fn_i64_out_textual,
+    input_json: fn_i64_in_json,
+    output_json: fn_i64_out_json,
+    type_len: fn_i64_len,
+    data_len: fn_i64_dat_output_len,
+    receive: fn_i64_recv,
     send: fn_i64_send,
     send_to: fn_i64_send_to,
-    to_typed: fn_i64_to_typed,
-    from_typed: fn_i64_from_typed,
     default: fn_i64_default,
 };

@@ -1,4 +1,5 @@
-use crate::tuple::enum_dat::EnumDat;
+use crate::data_type::dat_typed::DatTyped;
+
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum OpType {
@@ -13,7 +14,7 @@ pub struct Filter {
     table_name: &'static str,
     column_name: &'static str,
     op_type: OpType,
-    datum: EnumDat,
+    datum: DatTyped,
 }
 
 impl Filter {
@@ -21,7 +22,7 @@ impl Filter {
         table_name: &'static str,
         column_name: &'static str,
         op_type: OpType,
-        datum: EnumDat,
+        datum: DatTyped,
     ) -> Filter {
         Self {
             table_name,
@@ -42,7 +43,7 @@ impl Filter {
         &self.column_name
     }
 
-    pub fn datum(&self) -> &EnumDat {
+    pub fn datum(&self) -> &DatTyped {
         &self.datum
     }
 }

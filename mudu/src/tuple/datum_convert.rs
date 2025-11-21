@@ -1,24 +1,24 @@
 use crate::common::result::RS;
-use crate::data_type::dt_param::ParamObj;
-use crate::error::ec::EC;
-use crate::m_error;
-use crate::tuple::dat_internal::DatInternal;
-use crate::tuple::datum::Datum;
+use crate::data_type::dat_type::DatType;
+use crate::data_type::dat_value::DatValue;
+use crate::data_type::datum::Datum;
+use crate::tuple::datum_desc::DatumDesc;
 
-pub fn datum_from_binary<T: Datum + 'static, B: AsRef<[u8]>>(datum: B) -> RS<T> {
-    let desc = T::datum_desc();
-    let dat_type_id = desc.dat_type_id();
-    let r = dat_type_id.fn_recv()(datum.as_ref(), &ParamObj::default_for(dat_type_id))
-        .map_err(|e| m_error!(EC::TypeBaseErr, "from binary error", e))?;
-    let value: T = r.into_to_typed();
-    Ok(value)
+pub fn datum_from_binary<T: Datum + 'static, B: AsRef<[u8]>>(datum: B, _: &DatumDesc) -> RS<T> {
+    T::from_binary(datum.as_ref())
 }
 
-pub fn datum_to_binary<T: Datum + 'static>(datum: &T) -> RS<Vec<u8>> {
-    let desc = T::datum_desc();
-    let dat_type_id = desc.dat_type_id();
-    let internal = DatInternal::from_datum(datum.clone())?;
-    let binary = dat_type_id.fn_send()(&internal, desc.param_obj())
-        .map_err(|e| m_error!(EC::TypeBaseErr, "convert datum error", e))?;
-    Ok(binary.into())
+pub fn datum_to_binary<T: Datum + 'static>(datum: &T, _: &DatumDesc) -> RS<Vec<u8>> {
+    let dat_binary = datum.to_binary(T::dat_type())?;
+    Ok(dat_binary.into())
+}
+
+pub fn datum_to_value<T: Datum>(datum: &T, dat_type: &DatType) -> RS<DatValue> {
+    let internal = DatValue::from_datum(datum.clone(), dat_type)?;
+    Ok(internal)
+}
+
+pub fn datum_from_value<T: Datum>(value: &DatValue) -> RS<T> {
+    let internal = T::from_value(value)?;
+    Ok(internal)
 }

@@ -15,7 +15,7 @@ use lazy_static::lazy_static;
 use scc::{HashIndex, HashSet};
 
 use crate::dump_task_trace;
-use crate::notifier::Notifier;
+use crate::notifier::NotifyWait;
 use crate::task::spawn_local_task;
 use mudu::common::result::RS;
 use mudu::error::ec::EC;
@@ -109,7 +109,7 @@ pub async fn async_debug_serve(addr: SocketAddr) -> Result<(), MError> {
     }
 }
 
-pub fn debug_serve(canceler: Notifier, port: u16) {
+pub fn debug_serve(canceler: NotifyWait, port: u16) {
     let async_debug_serve = async_debug_serve(([0, 0, 0, 0], port).into());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

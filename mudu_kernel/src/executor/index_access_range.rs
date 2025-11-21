@@ -1,11 +1,11 @@
 use crate::contract::query_exec::QueryExec;
-use crate::sync::a_mutex::AMutex;
 use crate::x_engine::api::{RSCursor, TupleRow, XContract};
 use crate::x_engine::thd_ctx::ThdCtx;
 use crate::x_engine::x_param::PAccessRange;
 use async_trait::async_trait;
 use mudu::common::result::RS;
 use mudu::tuple::tuple_field_desc::TupleFieldDesc as TupleDesc;
+use mudu_utils::sync::a_mutex::AMutex;
 use std::sync::Arc;
 
 pub struct IndexAccessRange {

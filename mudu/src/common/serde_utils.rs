@@ -2,9 +2,9 @@ use crate::common::endian;
 use crate::common::result::RS;
 use crate::error::ec::EC;
 use crate::m_error;
-use rmp_serde::{Serializer as RmpSerializer, encode};
-use serde::Serialize;
+use rmp_serde::{encode, Serializer as RmpSerializer};
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 use serde_json;
 use std::io;
 use std::io::Write;
@@ -355,7 +355,8 @@ mod tests {
     #[test]
     fn test_datum_desc() {
         let json = include_str!("test_data/datum_desc.json");
-        let command_in = serde_json::from_str::<DatumDesc>(json).unwrap();
+        let command_in = serde_json::from_str::<DatumDesc>(json)
+            .expect("json deserialization failed");
         let vec = __serialize_sized_to_vec::<_, true>(&command_in).unwrap();
         let (command_in_1, _n) =
             __deserialize_sized_from::<DatumDesc, true>(vec.as_slice()).unwrap();

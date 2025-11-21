@@ -1,4 +1,5 @@
 # How to Start
+
 A wallet application example.
 
 ## Clone the Repository
@@ -6,6 +7,7 @@ A wallet application example.
 ```bash
 git clone https://github.com/scuptio/mududb.git
 ```
+
 ## Install Tools and MuduDB Server
 
 ```bash
@@ -77,11 +79,12 @@ tree
     └── example.wasm
 ```
 
-
 ### TODO ..
+
 Some manual work is required here. Make it better.
 
 ## Generate package
+
 ```bash
 cargo make
 ```
@@ -91,17 +94,21 @@ Start MuduDB Server
 Configure MuduDB
 
 Edit the configuration file:
+
 ```bash
 cat ${HOME}/.mudu/mududb_cfg.toml
 ```
 
 Example output:
+
 ```toml
-mpk_path = [mudu package directory]
-data_path = [mudu database file directory]
-listen_ip = [server ip]
-listen_port = [listen port]
+mpk_path = "[mudu package directory]"
+data_path = "[mudu database file directory]"
+listen_ip = "[server ip]"
+http_listen_port = "[http protocol listen port]"
+pg_listen_port = "[http protocol listen port]"
 ```
+
 Copy the wallet.mpk file to the Mudu package directory as specified in the mududb_cfg.toml file.
 
 ## Start the Server

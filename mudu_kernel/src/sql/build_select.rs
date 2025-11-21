@@ -2,7 +2,7 @@ use crate::contract::table_desc::TableDesc;
 use crate::sql::proj_field::ProjField;
 use mudu::common::id::OID;
 use mudu::common::result::RS;
-use mudu::data_type::type_desc::TypeDesc;
+use mudu::data_type::dat_type::DatType;
 use mudu::error::ec::EC as ER;
 use mudu::m_error;
 use sql_parser::ast::select_term::SelectTerm;
@@ -10,7 +10,7 @@ use sql_parser::ast::select_term::SelectTerm;
 pub fn visit_select_term(
     select_term: &Vec<SelectTerm>,
     table_desc: &TableDesc,
-) -> RS<(Vec<OID>, Vec<ProjField>, Vec<TypeDesc>)> {
+) -> RS<(Vec<OID>, Vec<ProjField>, Vec<DatType>)> {
     let mut ids = vec![];
     let mut proj_fields = vec![];
     let mut type_desc_vec = vec![];

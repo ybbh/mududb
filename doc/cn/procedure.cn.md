@@ -36,14 +36,14 @@
 - **供应商锁定**：不同DBMS间可移植性有限
 - **版本控制挑战**：需专用工具支持
 
-# Mudu过程：统一交互式与过程式执行
+# Mudu可移植数据访问(MPDA)代码：统一交互式与过程式执行
 
 同一份代码可同时以交互式和过程式模式运行。
 
-我们旨在融合两种模式的优点，同时消除其缺陷。Mudu过程实现了这一目标。您可使用大多数现代语言编写Mudu过程——无需依赖PostgreSQL
+我们旨在融合两种模式的优点，同时消除其缺陷。MPDA实现了这一目标。您可使用大多数现代语言编写MPDA——无需依赖PostgreSQL
 PL/pgSQL或MySQL存储过程等"怪异"语法。
 
-开发过程中，Mudu过程如同ORM映射框架般以交互方式运行。
+开发过程中，MPDA如同ORM映射框架般以交互方式运行。
 
 ## 当前实现（Rust）
 
@@ -52,7 +52,7 @@ Mudu运行时目前支持Rust。基于Rust的存储过程采用以下函数签�
 ### 过程规范
 
 ```
-#[mudu_macro]
+#[mudu_proc]
 fn {procedure_name}(
     xid: XID,
     {argument_list...}
@@ -63,9 +63,9 @@ fn {procedure_name}(
 
 有效的Rust函数名
 
-### Macro #[mudu_macro]:
+### Macro #[mudu_proc]:
 
-标识函数为Mudu过程的宏
+标识函数为MPDA的宏
 
 ### 参数:
 
@@ -75,9 +75,9 @@ fn {procedure_name}(
 
 ### {argument_list...}:
 
-实现 `ToDatum` 特性的输入参数。
+实现 `Entity` 特性的输入参数。
 
-支持类型：`bool`, `i32`, `i64`, `i128`, `String`, `f32`, `f64`。
+支持类型：`i32`, `i64`,  `String`, `f32`, `f64`。
 
 不支持：自定义结构体、枚举、数组或元组。
 
@@ -85,7 +85,7 @@ fn {procedure_name}(
 
 #### {return_value_type}:
 
-实现 `ToDatum` 特性的返回类型（支持类型与参数相同）。
+实现 `Entity` 特性的返回类型（支持类型与参数相同）。
 
 返回结果类型 `RS` 是 `Result` 枚举：
 
@@ -94,23 +94,35 @@ use mudu::error::error::ER;
 pub type RS<X> = Result<X, ER>; // ER: 错误类型
 ```
 
-## Mudu过程中的CRUD(Create/Read/Update/Delete)操作
+## MPDA中的CRUD(Create/Read/Update/Delete)操作
 
-Mudu过程可以调用2个API。
+MPDA可以调用2个API。
 
 ### 1. `query`
 
 `query`SELECT语句
-
+<!--
+quote_begin
+content="[Query API](../lang.common/mudu_query.md#L-L)"
+-->
+<!--
+quote_begin
+content="[Query API](../../sys_interface/src/api.rs#L34-L40)"
+lang="rust"
+-->
 ```rust
-pub fn query<R: Record>(
+pub fn mudu_command(
     xid: XID,
     sql: &dyn SQLStmt,
-    params: &[&dyn ToDatum]
-) -> RS<RecordSet<R>> { ... }
+    params: &dyn SQLParams,
+) -> RS<u64> {
+    inner::inner_command(xid, sql, params)
+}
 ```
+<!--quote_end-->
+<!--quote_end-->
 
-`query` 自动执行 R2O（关系对象映射），返回实现 `Record` trait的对象结果集。
+`query` 自动执行 R2O（关系对象映射），返回实现 `Entity` trait的对象结果集。
 
 ---
 
@@ -118,13 +130,28 @@ pub fn query<R: Record>(
 
 用于 INSERT/UPDATE/DELETE 操作
 
+<!--
+quote_begin
+content="[Command API](../lang.common/mudu_command.md#L-L)"
+-->
+<!--
+quote_begin
+content="[Command API](../../sys_interface/src/api.rs#L11-L19)"
+lang="rust"
+-->
 ```rust
-pub fn command(
-    xid: XID, 
-    sql: &dyn SQLStmt, 
-    params: &[&dyn ToDatum]
-) -> RS<usize> { ... } // 返回受影响的行数
+pub fn mudu_query<
+    R: Entity
+>(
+    xid: XID,
+    sql: &dyn SQLStmt,
+    params: &dyn SQLParams,
+) -> RS<RecordSet<R>> {
+    inner::inner_query(xid, sql, params)
+}
 ```
+<!--quote_end-->
+<!--quote_end-->
 
 ### 通用参数：
 
@@ -150,7 +177,40 @@ content="[KeyTrait](../lang.common/proc_key_traits.md#L-L)"
 
 <!--
 quote_begin
-content="[DatumDyn](../../mudu/src/database/sql_stmt.rs#L3-L8)"
+content="[Entity](../../mudu/src/database/entity.rs#L12-L34)"
+lang="rust"
+-->
+```rust
+pub trait Entity: private::Sealed + Datum {
+    fn new_empty() -> Self;
+
+    fn tuple_desc() -> &'static TupleFieldDesc;
+
+    fn object_name() -> &'static str;
+
+    fn get_field_binary(&self, field_name: &str) -> RS<Option<Vec<u8>>>;
+
+    fn set_field_binary<B: AsRef<[u8]>>(&mut self, field_name: &str, binary: B) -> RS<()>;
+
+    fn get_field_value(&self, field_name: &str) -> RS<Option<DatValue>>;
+
+    fn set_field_value<D: AsRef<DatValue>>(&mut self, field_name: &str, value: D) -> RS<()>;
+
+    fn from_tuple(tuple_row: &TupleField) -> RS<Self> {
+        entity_utils::entity_from_tuple(tuple_row)
+    }
+
+    fn to_tuple(&self) -> RS<TupleField> {
+        entity_utils::entity_to_tuple(self)
+    }
+}
+```
+<!--quote_end-->
+
+
+<!--
+quote_begin
+content="[SQLStmt](../../mudu/src/database/sql_stmt.rs#L3-L8)"
 lang="rust"
 -->
 ```rust
@@ -162,24 +222,32 @@ pub trait SQLStmt: fmt::Debug + fmt::Display + Sync + Send {
 ```
 <!--quote_end-->
 
-### DatumDyn
+### Datum, DatumDyn
 
 <!--
 quote_begin
-content="[DatumDyn](../../mudu/src/tuple/datum.rs#L23-L36)"
+content="[DatumDyn](../../mudu/src/data_type/datum.rs#L18-L38)"
 lang="rust"
 -->
 ```rust
+pub trait Datum: DatumDyn + Clone + 'static {
+    fn dat_type() -> &'static DatType;
+
+    fn from_binary(binary: &[u8]) -> RS<Self>;
+
+    fn from_value(value: &DatValue) -> RS<Self>;
+
+    fn from_textual(textual: &str) -> RS<Self>;
+}
+
 pub trait DatumDyn: fmt::Debug + Send + Sync + Any {
-    fn dat_type_id_self(&self) -> RS<DatTypeID>;
+    fn dat_type_id(&self) -> RS<DatTypeID>;
 
-    fn to_typed(&self, param: &ParamObj) -> RS<DatTyped>;
+    fn to_binary(&self, dat_type: &DatType) -> RS<DatBinary>;
 
-    fn to_binary(&self, param: &ParamObj) -> RS<DatBinary>;
+    fn to_textual(&self, dat_type: &DatType) -> RS<DatTextual>;
 
-    fn to_printable(&self, param: &ParamObj) -> RS<DatPrintable>;
-
-    fn to_internal(&self, param: &ParamObj) -> RS<DatInternal>;
+    fn to_value(&self, dat_type: &DatType) -> RS<DatValue>;
 
     fn clone_boxed(&self) -> Box<dyn DatumDyn>;
 }
@@ -187,8 +255,8 @@ pub trait DatumDyn: fmt::Debug + Send + Sync + Any {
 <!--quote_end-->
 <!--quote_end-->
 
+## MPDA的例子: 钱包应用转账过程
 
-## Mudu过程的例子: 钱包应用转账过程
 <!--
 quote_begin
 content="[Example](../lang.common/transfer_funds.md#L-L)"
@@ -227,7 +295,7 @@ pub fn transfer_funds(xid: XID, from_user_id: i32, to_user_id: i32, amount: i32)
         return Err(m_error!(MuduError, "no such user"));
     };
 
-    if from_wallet.get_balance().as_ref().unwrap().get_value() < amount {
+    if *from_wallet.get_balance().as_ref().unwrap() < amount {
         return Err(m_error!(MuduError, "insufficient funds"));
     }
 
@@ -263,7 +331,7 @@ pub fn transfer_funds(xid: XID, from_user_id: i32, to_user_id: i32, amount: i32)
         return Err(m_error!(MuduError, "transfer fund failed"));
     }
 
-    // 3. Record the transaction
+    // 3. Entity the transaction
     let id = Uuid::new_v4().to_string();
     let insert_rows = mudu_command(
         xid,
@@ -287,7 +355,7 @@ pub fn transfer_funds(xid: XID, from_user_id: i32, to_user_id: i32, amount: i32)
 
 ## Mudu 过程与事务
 
-Mudu过程支持两种事务执行模式：
+MPDA支持两种事务执行模式：
 
 ### 自动模式
 
@@ -321,7 +389,7 @@ Mudu 过程在交互式开发和生产部署中使用完全相同的代码，消
 ## 2. 原生 ORM 支持
 
 无缝对象关系映射
-框架通过 `Record` 特征提供内置 ORM 能力，自动将查询结果映射到 Rust 结构体，在保持类型安全的同时消除样板代码。
+框架通过 `Entity` 特征提供内置 ORM 能力，自动将查询结果映射到 Rust 结构体，在保持类型安全的同时消除样板代码。
 
 ## 3. 静态分析友好
 
@@ -339,11 +407,11 @@ Mudu 的强类型 API 支持：
 
 ```rust
 // 准备AI训练数据，不必导入/导出  
-#[mudu_macro]
+#[mudu_proc]
 fn prepare_training_data(xid: XID) -> RS<()> {
-    command(xid, 
+    mudu_command(xid, 
         sql_stmt!("..."),
-        &[])?;
+        sql_param!(&[]))?;
     // Further processing...
 }
 ```
@@ -361,14 +429,14 @@ fn prepare_training_data(xid: XID) -> RS<()> {
 use chrono::Utc;
 use uuid::Uuid;
 
-#[mudu_macro]
+#[mudu_proc]
 fn create_order(xid: XID, user_id: i32) -> RS<String> {
     // Do something ....
 
     let order_id = Uuid::new_v4().to_string();
     let created_at = Utc::now().naive_utc();
     
-    command(xid,
+    mudu_command(xid,
         sql_stmt!("INSERT INTO orders (id, user_id, created_at) 
                    VALUES (?, ?, ?)"),
         sql_param!(&[&order_id, &user_id, &created_at]))?;
@@ -387,7 +455,7 @@ fn create_order(xid: XID, user_id: i32) -> RS<String> {
 
 # 核心技术优势对比传统模式
 
-| 特性      | 传统方案         | Mudu过程优势 |
+| 特性      | 传统方案         | MPDA优势 |
 |:--------|:-------------|:---------|
 | 开发生产一致性 | CLI/存储过程代码不同 | 统一代码库    |
 | 类型安全    | 运行时 SQL 错误   | 编译期验证    |

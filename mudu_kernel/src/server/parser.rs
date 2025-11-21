@@ -19,7 +19,10 @@ impl Parser {
 impl QueryParser for Parser {
     type Statement = Arc<StmtList>;
 
-    async fn parse_sql(&self, sql: &str, _types: &[Type]) -> PgWireResult<Self::Statement> {
+    async fn parse_sql<C>(&self,
+                          client: &C,
+                          sql: &str,
+                          types: &[Type]) -> PgWireResult<Self::Statement> {
         info!("parsing statement: {}", sql);
         let parser = SQLParser::new();
         let r_tree = parser.parse(sql);

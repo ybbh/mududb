@@ -37,7 +37,7 @@ impl MetaMgrImpl {
             let metadata = rs_io(fs::metadata(&path))?;
             if metadata.is_file() {
                 let schema = Self::read_schema_from_file(&path.to_str().unwrap().to_string())?;
-                hash_table.insert(schema.table_name().to_string(), TableInfo::new(schema));
+                hash_table.insert(schema.table_name().to_string(), TableInfo::new(schema)?);
             }
         }
 
@@ -76,7 +76,7 @@ impl MetaMgrImpl {
                 }
             }
             let table_id = schema.id();
-            let table = TableInfo::new(schema.clone());
+            let table = TableInfo::new(schema.clone())?;
             let _ = self.table.insert(table_name.clone(), table.clone());
             let _ = self.id2table.insert(table_id, table);
             let _ = self.name2id.insert(table_name, table_id);

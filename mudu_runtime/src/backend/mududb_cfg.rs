@@ -12,17 +12,19 @@ pub struct MuduDBCfg {
     pub mpk_path: String,
     pub data_path: String,
     pub listen_ip: String,
-    pub listen_port: u16,
+    pub http_listen_port: u16,
+    pub pg_listen_port: u16,
 }
 
 impl Display for MuduDBCfg {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        write!(f, "MuduDB Cfg Setting:\n")?;
+        write!(f, "MuduDB Setting:\n")?;
         write!(f, "-------------------\n")?;
-        write!(f, "  -> Byte code path: {}\n", self.mpk_path)?;
+        write!(f, "  -> Package path: {}\n", self.mpk_path)?;
         write!(f, "  -> Data path: {}\n", self.data_path)?;
         write!(f, "  -> Listen IP address: {}\n", self.listen_ip)?;
-        write!(f, "  -> Listening port: {}\n", self.listen_port)?;
+        write!(f, "  -> HTTP Listening port: {}\n", self.http_listen_port)?;
+        write!(f, "  -> PG Listening port: {}\n", self.pg_listen_port)?;
         write!(f, "-------------------\n")?;
         Ok(())
     }
@@ -34,7 +36,8 @@ impl Default for MuduDBCfg {
             mpk_path: temp_dir().to_str().unwrap().to_string(),
             data_path: temp_dir().to_str().unwrap().to_string(),
             listen_ip: temp_dir().to_str().unwrap().to_string(),
-            listen_port: 8300,
+            http_listen_port: 8300,
+            pg_listen_port: 5432,
         }
     }
 }
@@ -96,7 +99,7 @@ fn write_mududb_cfg<P: AsRef<Path>>(path: P, cfg: &MuduDBCfg) -> RS<()> {
 
 #[cfg(test)]
 mod _test {
-    use crate::backend::mududb_cfg::{MuduDBCfg, read_mududb_cfg, write_mududb_cfg};
+    use crate::backend::mududb_cfg::{read_mududb_cfg, write_mududb_cfg, MuduDBCfg};
     use std::env::temp_dir;
     #[test]
     fn test_conf() {

@@ -1,15 +1,15 @@
-use crate::data_type::dt_impl::dat_typed::DatTyped;
-use crate::data_type::param_obj::ParamObj;
+use crate::data_type::dat_type::DatType;
+use crate::data_type::dat_value::DatValue;
 use arbitrary::Unstructured;
 
-pub type FnArbValue = fn(u: &mut Unstructured, _p: &ParamObj) -> arbitrary::Result<DatTyped>;
+pub type FnArbValue = fn(u: &mut Unstructured, &DatType) -> arbitrary::Result<DatValue>;
 
-pub type FnArbPrintable = fn(u: &mut Unstructured, _p: &ParamObj) -> arbitrary::Result<String>;
+pub type FnArbPrintable = fn(u: &mut Unstructured, &DatType) -> arbitrary::Result<String>;
 
-pub type FnArbParam = fn(_u: &mut Unstructured) -> arbitrary::Result<ParamObj>;
+pub type FnArbParam = fn(_u: &mut Unstructured) -> arbitrary::Result<DatType>;
 
 pub struct FnArbitrary {
     pub param: FnArbParam,
-    pub value_typed: FnArbValue,
+    pub value_object: FnArbValue,
     pub value_print: FnArbPrintable,
 }

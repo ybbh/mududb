@@ -1,14 +1,14 @@
 use crate::common::result::RS;
 use crate::common::result_of::rs_option;
 use crate::common::xid::XID;
+use crate::data_type::datum::DatumDyn;
 use crate::database::db_conn::DBConn;
-use crate::database::record::Record;
-use crate::database::record_set::RecordSet;
+use crate::database::entity::Entity;
+use crate::database::entity_set::RecordSet;
 use crate::database::result_set::ResultSet;
 use crate::database::sql_params::SQLParams;
 use crate::database::sql_stmt::SQLStmt;
 use crate::database::v2h_param::QueryResult;
-use crate::tuple::datum::DatumDyn;
 use crate::tuple::tuple_binary_desc::TupleBinaryDesc;
 use crate::tuple::tuple_field::TupleField;
 use crate::tuple::tuple_field_desc::TupleFieldDesc;
@@ -47,14 +47,14 @@ struct ContextResult {
 }
 
 impl ContextResult {
-    fn new(result_set: Arc<dyn ResultSet>, row_desc: Arc<TupleFieldDesc>) -> Self {
-        let (tuple_desc, datum_mapping) = row_desc.to_tuple_binary_desc();
-        Self {
+    fn new(result_set: Arc<dyn ResultSet>, row_desc: Arc<TupleFieldDesc>) -> RS<Self> {
+        let (tuple_desc, datum_mapping) = row_desc.to_tuple_binary_desc()?;
+        Ok(Self {
             result_set,
             row_desc,
             _tuple_desc: Arc::new(tuple_desc),
             datum_mapping,
-        }
+        })
     }
 
     fn row_desc(&self) -> &TupleFieldDesc {
@@ -90,7 +90,7 @@ impl ContextInner {
     fn xid(&self) -> XID {
         self.xid
     }
-    fn query<R: Record>(&self, sql: &dyn SQLStmt, param: &dyn SQLParams) -> RS<RecordSet<R>> {
+    fn query<R: Entity>(&self, sql: &dyn SQLStmt, param: &dyn SQLParams) -> RS<RecordSet<R>> {
         let (rs, rd) = self.context.query(sql, param)?;
         Ok(RecordSet::<R>::new(rs, rd))
     }
@@ -109,7 +109,7 @@ impl ContextInner {
 
     fn cache_result(&self, result: (Arc<dyn ResultSet>, Arc<TupleFieldDesc>)) -> RS<QueryResult> {
         let mut g = self.result_set.lock().unwrap();
-        let context_result = ContextResult::new(result.0, result.1);
+        let context_result = ContextResult::new(result.0, result.1)?;
 
         let result = QueryResult::new(self.xid, context_result.row_desc().clone());
         *g = Some(context_result);
@@ -181,7 +181,7 @@ impl Context {
         Ok(s)
     }
 
-    pub fn query<R: Record>(&self, sql: &dyn SQLStmt, param: &dyn SQLParams) -> RS<RecordSet<R>> {
+    pub fn query<R: Entity>(&self, sql: &dyn SQLStmt, param: &dyn SQLParams) -> RS<RecordSet<R>> {
         self.inner.query(sql, param)
     }
 
@@ -214,7 +214,7 @@ pub fn context(conn: Arc<dyn DBConn>) -> RS<Context> {
     Context::create(conn)
 }
 
-pub fn mudu_query<R: Record>(
+pub fn mudu_query<R: Entity>(
     xid: XID,
     sql: &dyn SQLStmt,
     param: &dyn SQLParams,

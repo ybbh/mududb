@@ -7,7 +7,7 @@ use async_backtrace::Location as BtLoc;
 use lazy_static::lazy_static;
 use scc::HashIndex;
 
-use crate::notifier::Notifier;
+use crate::notifier::NotifyWait;
 use crate::task_id;
 use crate::task_id::TaskID;
 use mudu::common::result::RS;
@@ -22,7 +22,7 @@ task_local! {
 
 pub struct TaskContext {
     name: String,
-    notifier: Notifier,
+    notifier: NotifyWait,
     local_task: bool,
     id: u128,
     backtrace: Mutex<VecDeque<BtLoc>>,
@@ -119,7 +119,7 @@ pub fn this_task_id() -> TaskID {
 }
 
 impl TaskContext {
-    fn new_context(id: TaskID, name: String, local_task: bool, notifier: Notifier) -> Arc<Self> {
+    fn new_context(id: TaskID, name: String, local_task: bool, notifier: NotifyWait) -> Arc<Self> {
         let r = Self {
             name,
             notifier,
@@ -154,7 +154,7 @@ impl TaskContext {
         self.name.clone()
     }
 
-    pub fn notifier(&self) -> Notifier {
+    pub fn notifier(&self) -> NotifyWait {
         self.notifier.clone()
     }
 
@@ -190,7 +190,7 @@ lazy_static! {
 }
 
 pub fn spawn_local_task<F>(
-    cancel_notifier: Notifier,
+    cancel_notifier: NotifyWait,
     _name: &str,
     future: F,
 ) -> RS<JoinHandle<Option<F::Output>>>
@@ -208,7 +208,7 @@ where
 }
 
 pub fn spawn_task<F>(
-    cancel_notifier: Notifier,
+    cancel_notifier: NotifyWait,
     _name: &str,
     future: F,
 ) -> RS<JoinHandle<Option<F::Output>>>
@@ -226,7 +226,7 @@ where
 }
 
 pub fn spawn_local_task_timeout<F>(
-    cancel_notifier: Notifier,
+    cancel_notifier: NotifyWait,
     duration: Duration,
     _name: &str,
     future: F,
@@ -240,7 +240,7 @@ where
     }))
 }
 
-async fn __select_local_till_done<F>(notify: Notifier, future: F) -> Option<F::Output>
+async fn __select_local_till_done<F>(notify: NotifyWait, future: F) -> Option<F::Output>
 where
     F: Future + 'static,
     F::Output: 'static,
@@ -267,7 +267,7 @@ pub enum TaskFailed {
 }
 
 async fn __select_local_till_done_or_timeout<F>(
-    notify: Notifier,
+    notify: NotifyWait,
     duration: Duration,
     future: F,
 ) -> Result<F::Output, TaskFailed>
@@ -294,7 +294,7 @@ where
     future.await
 }
 
-async fn __select_till_done<F>(notify: Notifier, future: F) -> Option<F::Output>
+async fn __select_till_done<F>(notify: NotifyWait, future: F) -> Option<F::Output>
 where
     F: Future + 'static,
     F::Output: Send + 'static,

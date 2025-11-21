@@ -2,7 +2,6 @@
 #![allow(unused)]
 pub mod fuzz;
 mod common;
-mod sync;
 mod io;
 mod x_log;
 mod collection;

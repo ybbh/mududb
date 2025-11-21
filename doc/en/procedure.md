@@ -49,11 +49,11 @@ In the procedural approach, developers implement business logic using stored pro
 
 ---
 
-# Mudu Procedure: Unified Interactive and Procedural Execution
+# Mudu Portable Data Access(MPDA) Code: Unified Interactive and Procedural Execution
 
 One piece of code can run both interactively and procedurally.
 
-We aim to combine the advantages of both modes while eliminating their drawbacks. Mudu Procedure achieves this. You can
+We aim to combine the advantages of both modes while eliminating their drawbacks. MPDA achieves this. You can
 write Mudu Procedures in most modern languages—without relying on "weird" or "ugly" syntax like PostgreSQL PL/pgSQL or
 MySQL’s stored procedures.
 
@@ -66,7 +66,7 @@ Mudu Runtime currently supports Rust. A Rust-based stored procedure uses the fol
 ## Procedure specification
 
 ```
-#[mudu_macro]
+#[mudu_proc]
 fn {procedure_name}(
     xid: XID,
     {argument_list...}
@@ -77,7 +77,7 @@ fn {procedure_name}(
 
 Valid Rust function name.
 
-### Macro #[mudu_macro]:
+### Macro #[mudu_proc]:
 
 Macro identifying the function as a Mudu procedure.
 
@@ -89,9 +89,9 @@ Transaction ID.
 
 ### {argument_list...}:
 
-Input arguments implementing the `ToDatum` trait.
+Input arguments implementing the `Entity` trait.
 
-Supported types: `bool`, `i32`, `i64`, `i128`, `String`, `f32`, `f64`.
+Supported types:  `i32`, `i64`, `String`, `f32`, `f64`.
 
 Unsupported: Custom structs, enums, arrays, or tuples.
 
@@ -99,7 +99,7 @@ Unsupported: Custom structs, enums, arrays, or tuples.
 
 #### {return_value_type}:
 
-Return type implementing the `ToDatum` trait (same supported types as arguments).
+Return type implementing the `Entity` trait (same supported types as arguments).
 
 Return Result Type `RS` is `Result` enum:
 
@@ -116,31 +116,56 @@ There are two key APIs that a Mudu procedure can invoke:
 
 `query` for SELECT statements
 
+<!--
+quote_begin
+content="[Query API](../lang.common/mudu_query.md#L-L)"
+-->
+<!--
+quote_begin
+content="[Query API](../../sys_interface/src/api.rs#L34-L40)"
+lang="rust"
+-->
 ```rust
-pub fn mudu_query<
-    R: Record
->(
+pub fn mudu_command(
     xid: XID,
     sql: &dyn SQLStmt,
     params: &dyn SQLParams,
-) -> RS<RecordSet<R>>
+) -> RS<u64> {
+    inner::inner_command(xid, sql, params)
+}
 ```
+<!--quote_end-->
+<!--quote_end-->
 
 `query` Performs R2O(relation to object) mapping automatically, returning a result set of objects implementing the
-`Record` trait.
+`Entity` trait.
 
 ### 2. `command`
 
 `command` for INSERT/UPDATE/DELETE
 
+<!--
+quote_begin
+content="[Command API](../lang.common/mudu_command.md#L-L)"
+-->
+<!--
+quote_begin
+content="[Command API](../../sys_interface/src/api.rs#L11-L19)"
+lang="rust"
+-->
 ```rust
-pub fn mudu_command(
-    xid: XID, 
+pub fn mudu_query<
+    R: Entity
+>(
+    xid: XID,
     sql: &dyn SQLStmt,
-    param: &dyn SQLParams
-) -> RS<u64>
-// Returns affected row count
+    params: &dyn SQLParams,
+) -> RS<RecordSet<R>> {
+    inner::inner_query(xid, sql, params)
+}
 ```
+<!--quote_end-->
+<!--quote_end-->
 
 ### Parameters for Both:
 
@@ -167,7 +192,40 @@ content="[KeyTrait](../lang.common/proc_key_traits.md#L-L)"
 
 <!--
 quote_begin
-content="[DatumDyn](../../mudu/src/database/sql_stmt.rs#L3-L8)"
+content="[Entity](../../mudu/src/database/entity.rs#L12-L34)"
+lang="rust"
+-->
+```rust
+pub trait Entity: private::Sealed + Datum {
+    fn new_empty() -> Self;
+
+    fn tuple_desc() -> &'static TupleFieldDesc;
+
+    fn object_name() -> &'static str;
+
+    fn get_field_binary(&self, field_name: &str) -> RS<Option<Vec<u8>>>;
+
+    fn set_field_binary<B: AsRef<[u8]>>(&mut self, field_name: &str, binary: B) -> RS<()>;
+
+    fn get_field_value(&self, field_name: &str) -> RS<Option<DatValue>>;
+
+    fn set_field_value<D: AsRef<DatValue>>(&mut self, field_name: &str, value: D) -> RS<()>;
+
+    fn from_tuple(tuple_row: &TupleField) -> RS<Self> {
+        entity_utils::entity_from_tuple(tuple_row)
+    }
+
+    fn to_tuple(&self) -> RS<TupleField> {
+        entity_utils::entity_to_tuple(self)
+    }
+}
+```
+<!--quote_end-->
+
+
+<!--
+quote_begin
+content="[SQLStmt](../../mudu/src/database/sql_stmt.rs#L3-L8)"
 lang="rust"
 -->
 ```rust
@@ -179,24 +237,32 @@ pub trait SQLStmt: fmt::Debug + fmt::Display + Sync + Send {
 ```
 <!--quote_end-->
 
-### DatumDyn
+### Datum, DatumDyn
 
 <!--
 quote_begin
-content="[DatumDyn](../../mudu/src/tuple/datum.rs#L23-L36)"
+content="[DatumDyn](../../mudu/src/data_type/datum.rs#L18-L38)"
 lang="rust"
 -->
 ```rust
+pub trait Datum: DatumDyn + Clone + 'static {
+    fn dat_type() -> &'static DatType;
+
+    fn from_binary(binary: &[u8]) -> RS<Self>;
+
+    fn from_value(value: &DatValue) -> RS<Self>;
+
+    fn from_textual(textual: &str) -> RS<Self>;
+}
+
 pub trait DatumDyn: fmt::Debug + Send + Sync + Any {
-    fn dat_type_id_self(&self) -> RS<DatTypeID>;
+    fn dat_type_id(&self) -> RS<DatTypeID>;
 
-    fn to_typed(&self, param: &ParamObj) -> RS<DatTyped>;
+    fn to_binary(&self, dat_type: &DatType) -> RS<DatBinary>;
 
-    fn to_binary(&self, param: &ParamObj) -> RS<DatBinary>;
+    fn to_textual(&self, dat_type: &DatType) -> RS<DatTextual>;
 
-    fn to_printable(&self, param: &ParamObj) -> RS<DatPrintable>;
-
-    fn to_internal(&self, param: &ParamObj) -> RS<DatInternal>;
+    fn to_value(&self, dat_type: &DatType) -> RS<DatValue>;
 
     fn clone_boxed(&self) -> Box<dyn DatumDyn>;
 }
@@ -205,6 +271,7 @@ pub trait DatumDyn: fmt::Debug + Send + Sync + Any {
 <!--quote_end-->
 
 ## A Example: A Wallet APP's Transfer Procedure
+
 <!--
 quote_begin
 content="[Example](../lang.common/transfer_funds.md#L-L)"
@@ -243,7 +310,7 @@ pub fn transfer_funds(xid: XID, from_user_id: i32, to_user_id: i32, amount: i32)
         return Err(m_error!(MuduError, "no such user"));
     };
 
-    if from_wallet.get_balance().as_ref().unwrap().get_value() < amount {
+    if *from_wallet.get_balance().as_ref().unwrap() < amount {
         return Err(m_error!(MuduError, "insufficient funds"));
     }
 
@@ -279,7 +346,7 @@ pub fn transfer_funds(xid: XID, from_user_id: i32, to_user_id: i32, amount: i32)
         return Err(m_error!(MuduError, "transfer fund failed"));
     }
 
-    // 3. Record the transaction
+    // 3. Entity the transaction
     let id = Uuid::new_v4().to_string();
     let insert_rows = mudu_command(
         xid,
@@ -301,7 +368,7 @@ pub fn transfer_funds(xid: XID, from_user_id: i32, to_user_id: i32, amount: i32)
 <!--quote_end-->
 <!--quote_end-->
 
-## Mudu Procedure and Transaction
+## MPDA and Transaction
 
 Mudu procedure supports 2 transaction execution modes:
 
@@ -338,7 +405,7 @@ context switching between tools and ensures consistency across environments.
 ## 2. Native ORM Support
 
 Seamless object-relational mapping
-The framework provides built-in ORM capabilities through the Record trait. It automatically maps query results to Rust
+The framework provides built-in ORM capabilities through the Entity trait. It automatically maps query results to Rust
 structs, eliminating boilerplate conversion code while maintaining type safety.
 
 ## 3. Static Analysis Friendly
@@ -362,11 +429,11 @@ An example is preparing AI training dataset without export/import.
 
 ```rust
 // Prepare AI training dataset without export/import  
-#[mudu_macro]
+#[mudu_proc]
 fn prepare_training_data(xid: XID) -> RS<()> {
-    command(xid, 
+    mudu_command(xid, 
         sql_stmt!("..."),
-        &[])?;
+        sql_param!(&[]))?;
     // Further processing...
 }
 ```
@@ -384,14 +451,14 @@ Example, use `uuid` and `chrono` crate,
 use chrono::Utc;
 use uuid::Uuid;
 
-#[mudu_macro]
+#[mudu_proc]
 fn create_order(xid: XID, user_id: i32) -> RS<String> {
     // Do something ....
 
     let order_id = Uuid::new_v4().to_string();
     let created_at = Utc::now().naive_utc();
     
-    command(xid,
+    mudu_command(xid,
         sql_stmt!("INSERT INTO orders (id, user_id, created_at) 
                    VALUES (?, ?, ?)"),
         sql_param!(&[&order_id, &user_id, &created_at]))?;
@@ -412,7 +479,7 @@ Advantages:
 
 # Key Technical Advantages
 
-| Feature         | Traditional Approach       | Mudu Procedure Advantage  |
+| Feature         | Traditional Approach       | MPDA Advantage  |
 |:----------------|:---------------------------|:--------------------------|
 | Dev-Prod Parity | Different code for CLI/SPs | Identical codebase        |
 | Type Safety     | Runtime SQL errors         | Compile-time validation   |
@@ -421,14 +488,17 @@ Advantages:
 
 # How MuduDB Treats the Interactive and Procedural Approach Uniformly
 
-MuduDB differs from traditional monolithic-architecture databases by splitting into two components: Mudu Runtime and DB Kernel.
+MuduDB differs from traditional monolithic-architecture databases by splitting into two components: Mudu Runtime and DB
+Kernel.
 
 Kernel provides basis foundations, transactions, and storage capabilities.
 Runtime supports for multi-language ecosystems.
-This runtime can host a VM(Virtual Machine) and execute intermediate WASM bytecode modules, into which mainstream programming languages can be compiled.
-During a Mudu Procedure execution, the runtime collaborates with kernel to complete the process.
+This runtime can host a VM(Virtual Machine) and execute intermediate WASM bytecode modules, into which mainstream
+programming languages can be compiled.
+During a MPDA execution, the runtime collaborates with kernel to complete the process.
 To illustrate this point, consider the following example:
-Suppose a procedure executes queries Q1, Q2, condition C1, and functions T1, T2 (implemented in a high-level language and can be compiled to the bytecode).
+Suppose a procedure executes queries Q1, Q2, condition C1, and functions T1, T2 (implemented in a high-level language
+and can be compiled to the bytecode).
 
 ```
 procedure {

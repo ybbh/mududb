@@ -7,14 +7,28 @@ use std::fmt::{Debug, Display, Formatter};
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AppProcDesc {
     /// module name to procedure description
-    pub modules: HashMap<String, Vec<ProcDesc>>,
+    modules: HashMap<String, Vec<ProcDesc>>,
 }
 
 impl AppProcDesc {
-    pub fn new() -> Self {
+    pub fn new_empty() -> Self {
         Self {
             modules: HashMap::new(),
         }
+    }
+
+    pub fn new(modules: HashMap<String, Vec<ProcDesc>>) -> Self {
+        Self {
+            modules,
+        }
+    }
+
+    pub fn modules(&self) -> &HashMap<String, Vec<ProcDesc>> {
+        &self.modules
+    }
+
+    pub fn into_modules(self) -> HashMap<String, Vec<ProcDesc>> {
+        self.modules
     }
 
     pub fn add(&mut self, desc: ProcDesc) {
@@ -63,8 +77,8 @@ mod tests {
             let mod_name = format!("mod_{}", j);
             let mut vec = vec![];
             for i in 0..3 {
-                let param_desc = <(i32, i32, i64)>::tuple_desc_static();
-                let return_desc = <(i32, String)>::tuple_desc_static();
+                let param_desc = <(i32, i32, i64)>::tuple_desc_static(&[]);
+                let return_desc = <(i32, String)>::tuple_desc_static(&[]);
                 let proc_desc = ProcDesc::new(
                     mod_name.clone(),
                     format!("proc_{}", i),

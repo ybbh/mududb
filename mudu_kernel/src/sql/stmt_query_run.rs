@@ -6,8 +6,7 @@ use crate::sql::stmt_query::StmtQuery;
 use async_std::prelude::Stream;
 use futures::stream;
 use mudu::common::result::RS;
-use mudu::data_type::dt_impl::dat_type_id::DatTypeID as TypeID;
-use mudu::data_type::dt_impl::dat_typed::DatTyped;
+use mudu::data_type::dat_type_id::{DatTypeID as TypeID, DatTypeID};
 use mudu::error::ec::EC as ER;
 use mudu::m_error;
 use pgwire::api::portal::Format;
@@ -73,7 +72,7 @@ fn to_pg_field_info(rd: &ProjList, format: &Format) -> RS<Vec<FieldInfo>> {
                 desc.name().clone(),
                 None,
                 None,
-                dt_id_to_pg_type(desc.type_desc().data_type_id()),
+                dt_id_to_pg_type(desc.type_desc().dat_type_id()),
                 format.format_for(index),
             ))
         })
@@ -86,8 +85,10 @@ fn dt_id_to_pg_type(dt: TypeID) -> PGDataType {
         TypeID::I64 => PGDataType::INT8,
         TypeID::F32 => PGDataType::FLOAT4,
         TypeID::F64 => PGDataType::FLOAT8,
-        TypeID::CharVarLen => PGDataType::TEXT,
-        TypeID::CharFixedLen => PGDataType::TEXT,
+        TypeID::String => PGDataType::TEXT,
+        _ => {
+            panic!("unsupported type {:?}", dt);
+        }
     }
 }
 
@@ -110,20 +111,21 @@ async fn encode_pg_wire_row_data(
             if let Some(datum) = row.get(idx) {
                 let field_desc = &tuple_desc.fields()[idx];
                 let dat_type_id = field_desc.dat_type_id();
-                let internal = dat_type_id.fn_recv()
-                    (&datum, field_desc.param_obj()).map_err(|e| {
+                let (internal, _) = dat_type_id.fn_recv()
+                    (&datum, field_desc.dat_type()).map_err(|e| {
                     m_error!(ER::TypeBaseErr, "recv error", e)
                 })?;
-                let value = dat_type_id.fn_to_typed()(&internal, field_desc.param_obj()).map_err(|e| {
-                    m_error!(ER::TypeBaseErr, "to_typed error", e)
-                })?;
 
-                let r = match value {
-                    DatTyped::I32(v) => encoder.encode_field(&v),
-                    DatTyped::I64(v) => encoder.encode_field(&v),
-                    DatTyped::F32(v) => encoder.encode_field(&v),
-                    DatTyped::F64(v) => encoder.encode_field(&v),
-                    DatTyped::String(v) => encoder.encode_field(&v),
+
+                let r = match dat_type_id {
+                    DatTypeID::I32 => encoder.encode_field(&internal.to_i32()),
+                    DatTypeID::I64 => encoder.encode_field(&internal.to_i64()),
+                    DatTypeID::F32 => encoder.encode_field(&internal.to_f32()),
+                    DatTypeID::F64 => encoder.encode_field(&internal.to_f64()),
+                    DatTypeID::String => encoder.encode_field(internal.expect_string()),
+                    _ => {
+                        panic!("unsupported type {:?}", dat_type_id);
+                    }
                 };
                 if let Err(e) = r {
                     has_err = true;

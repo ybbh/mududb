@@ -27,6 +27,10 @@ toml = "0.9.8"
 zip = "6.0.0"
 scopeguard = "1.2.0"
 base64 = "0.22.1"
+pgwire = "0.35.0"
+async-trait = "0.1.89"
+futures = "0.3.31"
+as-any = {version = "0.3.2"}
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 postgres = { version = "0.19.10" }
 scc = { workspace = true }

@@ -40,11 +40,18 @@ impl Default for IOUSetting {
 struct IoUring {
     ring: rliburing::io_uring,
     param: rliburing::io_uring_params,
-    iovec: Vec<iovec>,
+    iovec: Vec<IoVec>,
     fds: Vec<RawFd>,
     align_byte: u64,
 }
 
+unsafe impl Send for IoUring {}
+
+#[derive(Clone)]
+struct IoVec {
+    vec: iovec,
+}
+unsafe impl Send for IoVec {}
 pub async fn io_uring_event_loop<
     E: Send + 'static,
     U: Clone + Debug + Send + 'static,
@@ -67,7 +74,7 @@ async fn iou_event_loop_handle<
     C: Fn(Vec<U>),
 >(
     receiver: IoChRecv<E>,
-    iovec: Vec<iovec>,
+    iovec: Vec<IoVec>,
     fds: Vec<RawFd>,
     to_user_data: F,
     on_completion: C,
@@ -95,7 +102,7 @@ struct IoVecBuf<U: Clone + Debug + Send + 'static> {
     available_buf: usize,
     next_buf_index: usize,
     align_byte: u64,
-    buf: Vec<(iovec, Option<Vec<U>>)>,
+    buf: Vec<(IoVec, Option<Vec<U>>)>,
 }
 
 struct FileOffset {
@@ -129,16 +136,16 @@ fn write_to_iovec_one<U: Clone + Debug + Send + 'static>(
     let mut user_data = vec![];
     for i in to_write_index..n {
         let (buf, u) = &log_write[i];
-        if buf.len() > pair.0.iov_len as _ {
+        if buf.len() > pair.0.vec.iov_len as _ {
             panic!("buffer overflow")
         }
-        if buf_offset + buf.len() > pair.0.iov_len as _ {
+        if buf_offset + buf.len() > pair.0.vec.iov_len as _ {
             write_index = i;
             break;
         }
         unsafe {
             libc::memcpy(
-                pair.0.iov_base.add(buf_offset) as _,
+                pair.0.vec.iov_base.add(buf_offset) as _,
                 buf.as_ptr() as _,
                 buf.len() as _,
             )
@@ -147,12 +154,12 @@ fn write_to_iovec_one<U: Clone + Debug + Send + 'static>(
         user_data.push(u.clone());
     }
     let to_write_len = round_up_align(buf_offset as _, iovec_buf.align_byte);
-    if to_write_len > pair.0.iov_len as _ {
+    if to_write_len > pair.0.vec.iov_len as _ {
         panic!("buffer overflow")
     }
     unsafe {
         libc::memset(
-            pair.0.iov_base.add(buf_offset) as _,
+            pair.0.vec.iov_base.add(buf_offset) as _,
             0,
             (to_write_len - buf_offset as u64) as _,
         );
@@ -227,7 +234,7 @@ fn write_to_iovec<U: Clone + Debug + Send + 'static>(
 }
 
 impl IoUring {
-    fn create(iovec: Vec<iovec>, fds: Vec<RawFd>, setting: &IOUSetting) -> Result<Self> {
+    fn create(iovec: Vec<IoVec>, fds: Vec<RawFd>, setting: &IOUSetting) -> Result<Self> {
         let mut ring: rliburing::io_uring = unsafe { std::mem::zeroed() };
         let mut param: rliburing::io_uring_params = unsafe { std::mem::zeroed() };
         param.flags = rliburing::IORING_SETUP_SQPOLL;
@@ -273,7 +280,7 @@ async fn iou_event_loop_handle_gut<
     C: Fn(Vec<U>),
 >(
     receiver: Receiver<E>,
-    iovec: Vec<iovec>,
+    iovec: Vec<IoVec>,
     fds: Vec<RawFd>,
     to_user_data: &F,
     on_completion: &C,
@@ -350,7 +357,7 @@ fn iou_submit<U: Clone + Debug + Send + 'static>(
     let mut submit_count: usize = 0;
     let mut opt_split_index = None; // if queue is full, this would be set
     for (n, op) in write_ops.iter().enumerate() {
-        let buf_iovec = ring.iovec[op.buf_index as usize];
+        let buf_iovec = &ring.iovec[op.buf_index as usize];
 
         let cqe = unsafe {
             let cqe = rliburing::io_uring_get_sqe(&mut ring.ring);
@@ -365,7 +372,7 @@ fn iou_submit<U: Clone + Debug + Send + 'static>(
             rliburing::io_uring_prep_write_fixed(
                 cqe,
                 ring.fds[op.file_index as usize],
-                buf_iovec.iov_base as _,
+                buf_iovec.vec.iov_base as _,
                 op.data_size as _,
                 op.file_offset as _,
                 op.buf_index as _,
@@ -461,9 +468,11 @@ async fn _io_uring_event_loop<
             0,
         );
         for _i in 0..setting.buffer_count {
-            buf_iovec.push(iovec {
+            buf_iovec.push(IoVec {
+                vec: iovec {
                 iov_base: ptr.add((_i * buf_size) as usize),
                 iov_len: buf_size as usize,
+                }
             });
         }
         ptr

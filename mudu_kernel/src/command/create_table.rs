@@ -1,10 +1,10 @@
 use crate::contract::cmd_exec::CmdExec;
-use crate::sync::a_mutex::AMutex;
 use crate::x_engine::api::XContract;
 use crate::x_engine::thd_ctx::ThdCtx;
 use crate::x_engine::x_param::PCreateTable;
 use async_trait::async_trait;
 use mudu::common::result::RS;
+use mudu_utils::sync::a_mutex::AMutex;
 use mudu_utils::task_trace;
 
 pub struct CreateTable {

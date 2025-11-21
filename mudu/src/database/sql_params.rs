@@ -1,6 +1,6 @@
 use crate::common::result::RS;
 use crate::data_type::dat_type::DatType;
-use crate::tuple::datum::DatumDyn;
+use crate::data_type::datum::DatumDyn;
 use crate::tuple::datum_desc::DatumDesc;
 use crate::tuple::tuple_field_desc::TupleFieldDesc;
 use sealed::Sealed;
@@ -23,18 +23,18 @@ pub trait SQLParams: Sealed {
         unsafe { self.get_idx(n).unwrap_unchecked() }
     }
     #[doc(hidden)]
-    fn tuple_desc(&self) -> RS<TupleFieldDesc> {
+    fn param_tuple_desc(&self) -> RS<TupleFieldDesc> {
         let mut vec = Vec::with_capacity(self.size() as usize);
         for i in 0..self.size() {
             let datum = self.get_idx_unchecked(i);
-            let dat_type = DatType::new_with_default_param(datum.dat_type_id_self()?);
+            let dat_type = DatType::default_for(datum.dat_type_id()?);
             let datum_desc = DatumDesc::new(format!("v_{}", i), dat_type);
             vec.push(datum_desc)
         }
         Ok(TupleFieldDesc::new(vec))
     }
     #[doc(hidden)]
-    fn to_binary(&self, desc: &[DatumDesc]) -> RS<Vec<Vec<u8>>> {
+    fn param_to_binary(&self, desc: &[DatumDesc]) -> RS<Vec<Vec<u8>>> {
         let size = self.size() as usize;
         if desc.len() != self.size() as usize {
             panic!("desc and vec length do not match");
@@ -43,7 +43,7 @@ pub trait SQLParams: Sealed {
         for i in 0..size {
             let datum_desc = &desc[i];
             let datum = self.get_idx_unchecked(i as u64);
-            let binary = datum.to_binary(datum_desc.param_obj())?;
+            let binary = datum.to_binary(datum_desc.dat_type())?;
             vec.push(binary.into())
         }
         Ok(vec)

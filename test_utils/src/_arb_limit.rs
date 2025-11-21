@@ -7,3 +7,5 @@ pub const _ARB_MAX_DATUM_SIZE: usize = 100;
 pub const _ARB_MAX_NAME_LEN: usize = 100;
 
 pub const _ARB_MAX_STRING_LEN: usize = 100;
+
+pub const _ARB_MAX_ARRAY_LEN: usize = 100;

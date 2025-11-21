@@ -1,9 +1,9 @@
 use crate::contract::pst_op::{DeleteKV, InsertKV, PstOp, UpdateV};
-use crate::contract::s_task::STask;
 use mudu::common::id::OID;
 use mudu::common::result::RS;
 use mudu::error::ec::EC as ER;
 use mudu::m_error;
+use mudu_utils::sync::s_task::STask;
 use rusqlite::{params, Connection, Statement, Transaction};
 use std::str::FromStr;
 use std::sync::mpsc::{Receiver, Sender};

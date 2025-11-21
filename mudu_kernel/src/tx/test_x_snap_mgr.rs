@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod _test {
     use crate::tx::x_snap_mgr::{SnapshotRequester, XSnapMgr};
-    use mudu_utils::notifier::Notifier;
+    use mudu_utils::notifier::NotifyWait;
 
     use mudu_utils::log::log_setup;
     use mudu_utils::task::spawn_local_task;
@@ -14,7 +14,7 @@ mod _test {
     #[test]
     fn _test_x_snap_mgr() {
         log_setup("info");
-        let canceller = Notifier::new();
+        let canceller = NotifyWait::new();
         let x_snap_mgr = XSnapMgr::new(canceller.clone(), 100, 10);
         let handler = x_snap_mgr.snap_assign_task();
         let c = canceller.clone();
@@ -85,7 +85,7 @@ mod _test {
         let mut task = vec![];
         for _i in 0..num_tasks {
             let r = request.clone();
-            let t = spawn_local_task(Notifier::new(), "", async move {
+            let t = spawn_local_task(NotifyWait::new(), "", async move {
                 let duration = async_request(r, n).await;
                 duration
             });

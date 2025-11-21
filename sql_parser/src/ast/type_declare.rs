@@ -1,15 +1,15 @@
-use mudu::data_type::dt_impl::dat_type_id::DatTypeID;
-use mudu::data_type::param_info::ParamInfo;
-use mudu::data_type::param_obj::ParamObj;
+use mudu::data_type::dat_type::DatType;
+use mudu::data_type::dat_type_id::DatTypeID;
+use mudu::data_type::dt_info::DTInfo;
 
 #[derive(Clone, Debug)]
 pub struct TypeDeclare {
     id: DatTypeID,
-    param: ParamObj,
+    param: DatType,
 }
 
 impl TypeDeclare {
-    pub fn new(param: ParamObj) -> Self {
+    pub fn new(param: DatType) -> Self {
         Self {
             id: param.dat_type_id(),
             param,
@@ -20,11 +20,11 @@ impl TypeDeclare {
         self.id
     }
 
-    pub fn param(&self) -> &ParamObj {
+    pub fn param(&self) -> &DatType {
         &self.param
     }
 
-    pub fn param_info(&self) -> ParamInfo {
+    pub fn param_info(&self) -> DTInfo {
         self.param.to_info()
     }
 }

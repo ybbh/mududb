@@ -1,8 +1,8 @@
-use crate::contract::s_task::SyncTask;
 use crate::storage::pst_op_ch::PstOpCh;
 use crate::storage::pst_store_impl::{PstOpChImpl, PstStoreImpl};
-use crate::sync::unique_inner::UniqueInner;
 use mudu::common::result::RS;
+use mudu_utils::sync::s_task::SyncTask;
+use mudu_utils::sync::unique_inner::UniqueInner;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc::channel;

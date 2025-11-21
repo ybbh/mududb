@@ -7,6 +7,10 @@ mod file_name;
 mod kernel_function;
 mod procedure_invoke;
 mod runtime_simple;
-pub mod service;
-pub mod service_impl;
+pub mod runtime;
+pub mod runtime_impl;
 pub mod test_wasm_mod_path;
+
+mod service_trait;
+mod service_impl;
+pub mod service;

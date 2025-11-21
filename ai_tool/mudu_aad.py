@@ -1,12 +1,14 @@
 """
 MuduDB AI assisted development tool
 """
+import argparse
 import os
 import sys
-import httpx
-import argparse
 from datetime import datetime
+
+import httpx
 from volcenginesdkarkruntime import Ark
+
 # Authentication
 # 1.If you authorize your endpoint using an API key, you can set your api key to environment variable "ARK_API_KEY"
 # or specify api key by Ark(api_key="${YOUR_API_KEY}").
@@ -67,6 +69,7 @@ def mudu_doc_content(directory):
 
     return ''.join(markdown_contents).rstrip('\n')
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='MuduDB AI assisted development tool')
     parser.add_argument(
@@ -82,7 +85,7 @@ if __name__ == "__main__":
     if doc_dir is None:
         doc_dir = '.'
 
-    content_mudu =  mudu_doc_content(doc_dir)
+    content_mudu = mudu_doc_content(doc_dir)
 
     input_path = args.input_path
     if input_path is None:

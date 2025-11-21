@@ -66,7 +66,7 @@ impl SQLResolver {
             let column_def = rs_option(opt_column_def, "no such column")?;
             let desc = DatumDesc::new(
                 column_def.column_name().clone(),
-                column_def.data_type().clone(),
+                column_def.dat_type().clone(),
             );
             match value {
                 AssignedValue::Expression(_) => {
@@ -132,7 +132,7 @@ impl SQLResolver {
         let row = &stmt.values_list()[0];
         for (i, v) in row.iter().enumerate() {
             let c_def = &value_columns[i];
-            let desc = DatumDesc::new(c_def.column_name().clone(), c_def.data_type().clone());
+            let desc = DatumDesc::new(c_def.column_name().clone(), c_def.dat_type().clone());
 
             let item_value = match v {
                 ExprValue::ValueLiteral(l) => ItemValue::Literal(l.dat_type().clone()),
@@ -168,7 +168,7 @@ impl SQLResolver {
 fn build_data_desc_for_name(column_name: &str, table_def: &TableDef) -> RS<DatumDesc> {
     let opt = table_def.find_column_def_by_name(column_name);
     let column_def = rs_option(opt, &format!("no such column {}", column_name))?;
-    let datum_desc = DatumDesc::new(column_name.to_string(), column_def.data_type().clone());
+    let datum_desc = DatumDesc::new(column_name.to_string(), column_def.dat_type().clone());
     Ok(datum_desc)
 }
 

@@ -1,15 +1,15 @@
 use libsql::Transaction;
 use libsql::{Row, Rows};
 use mudu::common::result::RS;
-use mudu::common::xid::{XID, new_xid};
+use mudu::common::xid::{new_xid, XID};
 use mudu::database::result_set::ResultSet;
 use mudu::error::ec::EC;
 use mudu::m_error;
 
 use crate::async_utils::blocking;
 use libsql::params::IntoParams;
-use mudu::data_type::dt_impl::dat_type_id::DatTypeID;
-use mudu::data_type::dt_impl::dat_typed::DatTyped;
+use mudu::data_type::dat_type_id::DatTypeID;
+use mudu::data_type::dat_value::DatValue;
 use mudu::tuple::datum_desc::DatumDesc;
 use mudu::tuple::tuple_field::TupleField;
 use mudu::tuple::tuple_field_desc::TupleFieldDesc;
@@ -131,41 +131,43 @@ fn libsql_row_to_tuple_item(row: Row, item_desc: &[DatumDesc]) -> RS<TupleField>
     for i in 0..item_desc.len() {
         let desc = &item_desc[i];
         let n = i as i32;
-        let dat_typed = match desc.dat_type_id() {
+        let internal = match desc.dat_type_id() {
             DatTypeID::I32 => {
                 let val = row
                     .get::<i32>(n)
                     .map_err(|e| m_error!(EC::DBInternalError, "get item of row error", e))?;
-                DatTyped::I32(val)
+                DatValue::from_i32(val)
             }
             DatTypeID::I64 => {
                 let val = row
                     .get::<i64>(n)
                     .map_err(|e| m_error!(EC::DBInternalError, "get item of row error", e))?;
-                DatTyped::I64(val)
+                DatValue::from_i64(val)
             }
             DatTypeID::F32 => {
                 let val = row
                     .get::<f64>(n)
                     .map_err(|e| m_error!(EC::DBInternalError, "get item of row error", e))?;
-                DatTyped::F32(val as _)
+                DatValue::from_f64(val)
             }
             DatTypeID::F64 => {
                 let val = row
                     .get::<f64>(n)
                     .map_err(|_e| m_error!(EC::DBInternalError, "get item of row error"))?;
-                DatTyped::F64(val)
+                DatValue::from_f64(val)
             }
-            DatTypeID::CharVarLen | DatTypeID::CharFixedLen => {
+            DatTypeID::String => {
                 let val = row
                     .get::<String>(n)
                     .map_err(|e| m_error!(EC::DBInternalError, "get item of row error", e))?;
-                DatTyped::String(val)
+                DatValue::from_string(val)
+            }
+            _ => {
+                panic!("unsupported type {:?}", desc);
             }
         };
-        let internal = desc.dat_type_id().fn_from_typed()(&dat_typed, desc.param_obj())
-            .map_err(|e| m_error!(EC::TypeBaseErr, "convert data error", e))?;
-        let binary = desc.dat_type_id().fn_send()(&internal, desc.param_obj())
+
+        let binary = desc.dat_type_id().fn_send()(&internal, desc.dat_type())
             .map_err(|e| m_error!(EC::TypeBaseErr, "convert data error", e))?;
         vec.push(binary.into())
     }

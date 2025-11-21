@@ -1,18 +1,19 @@
-use crate::contract::a_task::ATask;
+use async_trait::async_trait;
 use crate::x_log::lsn_allocator::LSNAllocator;
 use crate::x_log::lsn_syncer::LSNSyncer;
 use crate::x_log::x_log_file::XLogFile;
 use crate::x_log::xl_cfg::XLCfg;
 use crate::x_log::xl_file_info::XLFileInfo;
 use mudu::common::result::RS;
-use mudu_utils::notifier::Notifier;
+use mudu_utils::notifier::NotifyWait;
+use mudu_utils::sync::a_task::ATask;
 use tracing::info;
 
 type XLFileInfoSender = tokio::sync::oneshot::Sender<XLFileInfo>;
 pub struct RecoveryTask {
-    canceller: Notifier,
+    canceller: NotifyWait,
     task: String,
-    recovery_done: Notifier,
+    recovery_done: NotifyWait,
     conf: XLCfg,
     vec_file_sender: Vec<XLFileInfoSender>,
     lsn_syncer: LSNSyncer,
@@ -21,9 +22,9 @@ pub struct RecoveryTask {
 
 impl RecoveryTask {
     pub fn new(
-        canceller: Notifier,
+        canceller: NotifyWait,
         task: String,
-        recovery_done: Notifier,
+        recovery_done: NotifyWait,
         conf: XLCfg,
         vec_file_sender: Vec<XLFileInfoSender>,
         lsn_syncer: LSNSyncer,
@@ -40,9 +41,9 @@ impl RecoveryTask {
         }
     }
 }
-
+#[async_trait]
 impl ATask for RecoveryTask {
-    fn notifier(&self) -> Notifier {
+    fn notifier(&self) -> NotifyWait {
         self.canceller.clone()
     }
 

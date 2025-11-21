@@ -1,13 +1,9 @@
 use crate::common::result::RS;
 use crate::data_type::dat_type::DatType;
-use crate::data_type::dt_impl::lang::rust::dt_lang_name_to_id;
-use crate::error::ec::EC;
-use crate::m_error;
-use crate::tuple::datum::DatumDyn;
+use crate::data_type::datum::Datum;
 use crate::tuple::datum_desc::DatumDesc;
 use crate::tuple::enumerable_datum::EnumerableDatum;
 use crate::tuple::tuple_field_desc::TupleFieldDesc;
-use std::any::type_name;
 
 // Defines conversion methods between Rust tuples and binary data with description information.
 /**
@@ -17,7 +13,7 @@ For a tuple (i32, String)
     use crate::mudu::tuple::rs_tuple_datum::RsTupleDatum;
 
     let data = (42, "hello".to_string());
-    let desc = <(i32, String)>::tuple_desc_static();
+    let desc = <(i32, String)>::tuple_desc_static(&["field_1".to_string(), "field_2".to_string()]);
     let binary = data.to_binary(desc.fields()).unwrap();
     let decoded = <(i32, String)>::from_binary(&binary, desc.fields()).unwrap();
 ```
@@ -25,38 +21,46 @@ For a tuple (i32, String)
 
 pub trait RsTupleDatum: EnumerableDatum + Sized + 'static {
     fn from_binary(vec_bin: &Vec<Vec<u8>>, desc: &[DatumDesc]) -> RS<Self>;
-    fn tuple_desc_static() -> TupleFieldDesc;
+    fn tuple_desc_static(field_name: &[String]) -> TupleFieldDesc;
 }
 
-fn datum_from_binary<T: DatumDyn + Clone + 'static>(slice: &[u8], desc: &DatumDesc) -> RS<T> {
-    let internal = desc.dat_type_id().fn_recv()(slice, desc.param_obj())
-        .map_err(|e| m_error!(EC::TypeBaseErr, "convert data format error", e))?;
-    let t = internal.into_to_typed::<T>();
-    Ok(t)
+fn datum_from_binary<T: Datum>(slice: &[u8], _desc: &DatumDesc) -> RS<T> {
+    T::from_binary(slice)
 }
 
-fn datum_to_binary<T: DatumDyn + Clone + 'static>(t: &T, desc: &DatumDesc) -> RS<Vec<u8>> {
-    let binary = t.to_binary(desc.param_obj())?;
+fn datum_to_binary<T: Datum>(t: &T, desc: &DatumDesc) -> RS<Vec<u8>> {
+    let binary = t.to_binary(desc.dat_type())?;
     Ok(binary.into())
 }
 
-fn names_to_desc(names: Vec<String>) -> TupleFieldDesc {
-    let desc: Vec<_> = names
-        .iter()
-        .enumerate()
-        .map(|(i, name)| {
-            let (id, _) = dt_lang_name_to_id(name).unwrap();
-            let desc = DatumDesc::new(format!("t_{}", i), DatType::new_with_default_param(id));
+fn to_tuple_desc(fields: Vec<(String, DatType)>) -> TupleFieldDesc {
+    let desc: Vec<_> = fields
+        .into_iter()
+        .map(|(name, ty)| {
+            let desc = DatumDesc::new(name, ty);
             desc
         })
         .collect();
     TupleFieldDesc::new(desc)
 }
 
+fn build_tuple_desc(field_name: &[String], field_ty: Vec<DatType>) -> TupleFieldDesc {
+    let fields: Vec<(String, DatType)> = if field_ty.len() == field_name.len() {
+        field_ty.into_iter().enumerate().map(|(i, ty)| {
+            (field_name[i].clone(), ty)
+        }).collect()
+    } else {
+        field_ty.into_iter().enumerate().map(|(i, ty)| {
+            (format!("field_{}", i), ty)
+        }).collect()
+    };
+    to_tuple_desc(fields)
+}
+
 
 impl<T> EnumerableDatum for T
 where
-    T: DatumDyn + Clone + 'static,
+    T: Datum,
 {
     fn to_binary(&self, desc: &[DatumDesc]) -> RS<Vec<Vec<u8>>> {
         if desc.len() != 1 {
@@ -66,14 +70,14 @@ where
         Ok(vec![binary])
     }
 
-    fn tuple_desc(&self) -> RS<TupleFieldDesc> {
-        Ok(Self::tuple_desc_static())
+    fn tuple_desc(&self, field_name: &[String]) -> RS<TupleFieldDesc> {
+        Ok(Self::tuple_desc_static(field_name))
     }
 }
 
 impl<T> RsTupleDatum for T
 where
-    T: DatumDyn + Clone + 'static,
+    T: Datum,
 {
     fn from_binary(vec_bin: &Vec<Vec<u8>>, desc: &[DatumDesc]) -> RS<T> {
         if vec_bin.len() != 1 || desc.len() != 1 {
@@ -82,9 +86,14 @@ where
         datum_from_binary::<T>(&vec_bin[0], &desc[0])
     }
 
-    fn tuple_desc_static() -> TupleFieldDesc {
-        let name = type_name::<T>().split("::").last().unwrap_or("").to_string();
-        names_to_desc(vec![name])
+    fn tuple_desc_static(field_name: &[String]) -> TupleFieldDesc {
+        let ty = T::dat_type().clone();
+        let name = if field_name.len() == 1 {
+            field_name[0].clone()
+        } else {
+            Default::default()
+        };
+        to_tuple_desc(vec![(name, ty)])
     }
 }
 
@@ -96,7 +105,7 @@ macro_rules! impl_rs_tuple_datum {
                 Ok(vec![])
             }
 
-            fn tuple_desc(&self) -> RS<TupleFieldDesc> {
+            fn tuple_desc(&self, _field_name:&[String]) -> RS<TupleFieldDesc> {
                 Ok(TupleFieldDesc::new(vec![]))
             }
         }
@@ -106,7 +115,7 @@ macro_rules! impl_rs_tuple_datum {
                 Ok(())
             }
 
-            fn tuple_desc_static() -> TupleFieldDesc {
+            fn tuple_desc_static(_field_name:&[String]) -> TupleFieldDesc {
                 TupleFieldDesc::new(vec![])
             }
         }
@@ -114,7 +123,7 @@ macro_rules! impl_rs_tuple_datum {
 
     // recursive：handle tuple (T, T..., T)
     ($($T:ident),+) => {
-        impl<$($T: DatumDyn + Clone + 'static),*> EnumerableDatum for ($($T,)*) {
+        impl<$($T: Datum),*> EnumerableDatum for ($($T,)*) {
             #[allow(non_snake_case)]
             #[allow(unused_assignments)]
             fn to_binary(&self, desc: &[DatumDesc]) -> RS<Vec<Vec<u8>>> {
@@ -131,12 +140,12 @@ macro_rules! impl_rs_tuple_datum {
                 Ok(vec_binary)
             }
 
-            fn tuple_desc(&self) -> RS<TupleFieldDesc> {
-                Ok(Self::tuple_desc_static())
+            fn tuple_desc(&self, field_name:&[String]) -> RS<TupleFieldDesc> {
+                Ok(Self::tuple_desc_static(field_name))
             }
         }
 
-        impl<$($T: DatumDyn + Clone + 'static),*> RsTupleDatum for ($($T,)*) {
+        impl<$($T: Datum),*> RsTupleDatum for ($($T,)*) {
             #[allow(non_snake_case)]
             #[allow(unused_assignments)]
             fn from_binary(vec_bin: &Vec<Vec<u8>>, desc: &[DatumDesc]) -> RS<($($T,)*)> {
@@ -151,11 +160,11 @@ macro_rules! impl_rs_tuple_datum {
                 Ok(($($T,)*))
             }
 
-            fn tuple_desc_static() -> TupleFieldDesc {
-                let names:Vec<String> = vec![
-                    $(type_name::<$T>().split("::").last().unwrap_or("").to_string(),)*
+            fn tuple_desc_static(field_name:&[String]) -> TupleFieldDesc {
+                let vec_ty:Vec<DatType> = vec![
+                    $(<$T>::dat_type().clone(),)*
                 ];
-                names_to_desc(names)
+                build_tuple_desc(field_name, vec_ty)
             }
         }
     };
@@ -228,8 +237,12 @@ mod tests {
 
     #[test]
     fn test_tuple_datum() {
-        println!("{:?}", <i32 as rs_tuple_datum::RsTupleDatum>::tuple_desc_static());
-        println!("{:?}", <(i32,) as rs_tuple_datum::RsTupleDatum>::tuple_desc_static());
-        println!("{:?}", <(i32, i64) as rs_tuple_datum::RsTupleDatum>::tuple_desc_static());
+        println!("{:?}", <i32 as rs_tuple_datum::RsTupleDatum>::tuple_desc_static(
+            &["test_field1".to_string()]
+        ));
+        println!("{:?}", <(i32,) as rs_tuple_datum::RsTupleDatum>::tuple_desc_static(&[]));
+        println!("{:?}", <(i32, i64) as rs_tuple_datum::RsTupleDatum>::tuple_desc_static(
+            &["f1".to_string(), "f2".to_string()]
+        ));
     }
 }

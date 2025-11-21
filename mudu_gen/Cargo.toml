@@ -13,7 +13,7 @@ mudu = { workspace = true }
 sql_parser = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 rust-format = "0.3.4"
-
+tera = {version = "1.20.1"}
 [dev-dependencies]
 project-root = { workspace = true }
 

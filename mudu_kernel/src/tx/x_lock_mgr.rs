@@ -1,5 +1,4 @@
 use crate::contract::x_lock_mgr::{LockResult, XLockMgr};
-use crate::sync::notify_wait::Notify;
 use crate::tx::lock_table::LockTable;
 use async_trait::async_trait;
 use mudu::common::buf::Buf;
@@ -9,6 +8,7 @@ use mudu::common::xid::XID;
 use mudu::error::ec::EC as ER;
 use mudu::m_error;
 use mudu::tuple::tuple_binary_desc::TupleBinaryDesc as TupleDesc;
+use mudu_utils::sync::notify_wait::Notify;
 use scc::HashMap;
 use std::sync::Arc;
 

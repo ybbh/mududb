@@ -1,13 +1,18 @@
 pub mod object {
+
     use lazy_static::lazy_static;
     use mudu::common::result::RS;
-    use mudu::database::attr_binary::AttrBinary;
-    use mudu::database::attr_set_get::{attr_get_binary, attr_set_binary};
+    use mudu::data_type::dat_binary::DatBinary;
+    use mudu::data_type::dat_textual::DatTextual;
+    use mudu::data_type::dat_type::DatType;
+    use mudu::data_type::dat_type_id::DatTypeID;
+    use mudu::data_type::dat_value::DatValue;
+    use mudu::data_type::datum::{Datum, DatumDyn};
+    use mudu::database::attr_field_access;
     use mudu::database::attr_value::AttrValue;
-    use mudu::database::record::Record;
-    use mudu::database::record_convert_tuple::{record_from_tuple, record_to_tuple};
-    use mudu::tuple::datum_convert::{datum_from_binary, datum_to_binary};
-    use mudu::tuple::tuple_field::TupleField;
+    use mudu::database::entity::Entity;
+    use mudu::database::entity_utils;
+    use mudu::tuple::datum_desc::DatumDesc;
     use mudu::tuple::tuple_field_desc::TupleFieldDesc;
 
     const TABLE_USERS: &str = "users";
@@ -19,96 +24,140 @@ pub mod object {
     const COLUMN_CREATED_AT: &str = "created_at";
     const COLUMN_UPDATED_AT: &str = "updated_at";
 
+    #[derive(Debug, Clone)]
     pub struct Users {
-        user_id: Option<AttrUserId>,
-        name: Option<AttrName>,
-        phone: Option<AttrPhone>,
-        email: Option<AttrEmail>,
-        password: Option<AttrPassword>,
-        created_at: Option<AttrCreatedAt>,
-        updated_at: Option<AttrUpdatedAt>,
+        user_id: Option<i32>,
+        name: Option<String>,
+        phone: Option<String>,
+        email: Option<String>,
+        password: Option<String>,
+        created_at: Option<i32>,
+        updated_at: Option<i32>,
     }
 
     impl Users {
         pub fn new(
-            user_id: AttrUserId,
-            name: AttrName,
-            phone: AttrPhone,
-            email: AttrEmail,
-            password: AttrPassword,
-            created_at: AttrCreatedAt,
-            updated_at: AttrUpdatedAt,
+            user_id: Option<i32>,
+            name: Option<String>,
+            phone: Option<String>,
+            email: Option<String>,
+            password: Option<String>,
+            created_at: Option<i32>,
+            updated_at: Option<i32>,
         ) -> Self {
             let s = Self {
-                user_id: Some(user_id),
-                name: Some(name),
-                phone: Some(phone),
-                email: Some(email),
-                password: Some(password),
-                created_at: Some(created_at),
-                updated_at: Some(updated_at),
+                user_id,
+                name,
+                phone,
+                email,
+                password,
+                created_at,
+                updated_at,
             };
             s
         }
 
-        pub fn set_user_id(&mut self, user_id: AttrUserId) {
+        pub fn set_user_id(&mut self, user_id: i32) {
             self.user_id = Some(user_id);
         }
 
-        pub fn get_user_id(&self) -> &Option<AttrUserId> {
+        pub fn get_user_id(&self) -> &Option<i32> {
             &self.user_id
         }
 
-        pub fn set_name(&mut self, name: AttrName) {
+        pub fn set_name(&mut self, name: String) {
             self.name = Some(name);
         }
 
-        pub fn get_name(&self) -> &Option<AttrName> {
+        pub fn get_name(&self) -> &Option<String> {
             &self.name
         }
 
-        pub fn set_phone(&mut self, phone: AttrPhone) {
+        pub fn set_phone(&mut self, phone: String) {
             self.phone = Some(phone);
         }
 
-        pub fn get_phone(&self) -> &Option<AttrPhone> {
+        pub fn get_phone(&self) -> &Option<String> {
             &self.phone
         }
 
-        pub fn set_email(&mut self, email: AttrEmail) {
+        pub fn set_email(&mut self, email: String) {
             self.email = Some(email);
         }
 
-        pub fn get_email(&self) -> &Option<AttrEmail> {
+        pub fn get_email(&self) -> &Option<String> {
             &self.email
         }
 
-        pub fn set_password(&mut self, password: AttrPassword) {
+        pub fn set_password(&mut self, password: String) {
             self.password = Some(password);
         }
 
-        pub fn get_password(&self) -> &Option<AttrPassword> {
+        pub fn get_password(&self) -> &Option<String> {
             &self.password
         }
 
-        pub fn set_created_at(&mut self, created_at: AttrCreatedAt) {
+        pub fn set_created_at(&mut self, created_at: i32) {
             self.created_at = Some(created_at);
         }
 
-        pub fn get_created_at(&self) -> &Option<AttrCreatedAt> {
+        pub fn get_created_at(&self) -> &Option<i32> {
             &self.created_at
         }
 
-        pub fn set_updated_at(&mut self, updated_at: AttrUpdatedAt) {
+        pub fn set_updated_at(&mut self, updated_at: i32) {
             self.updated_at = Some(updated_at);
         }
 
-        pub fn get_updated_at(&self) -> &Option<AttrUpdatedAt> {
+        pub fn get_updated_at(&self) -> &Option<i32> {
             &self.updated_at
         }
     }
 
-    impl Record for Users {
+    impl Datum for Users {
+        fn dat_type() -> &'static DatType {
+            lazy_static! {
+                static ref DAT_TYPE: DatType = entity_utils::entity_dat_type::<Users>();
+            }
+            &DAT_TYPE
+        }
+
+        fn from_binary(binary: &[u8]) -> RS<Self> {
+            entity_utils::entity_from_binary(binary)
+        }
+
+        fn from_value(value: &DatValue) -> RS<Self> {
+            entity_utils::entity_from_value(value)
+        }
+
+        fn from_textual(textual: &str) -> RS<Self> {
+            entity_utils::entity_from_textual(textual)
+        }
+    }
+
+    impl DatumDyn for Users {
+        fn dat_type_id(&self) -> RS<DatTypeID> {
+            entity_utils::entity_dat_type_id()
+        }
+
+        fn to_binary(&self, dat_type: &DatType) -> RS<DatBinary> {
+            entity_utils::entity_to_binary(self, dat_type)
+        }
+
+        fn to_textual(&self, dat_type: &DatType) -> RS<DatTextual> {
+            entity_utils::entity_to_textual(self, dat_type)
+        }
+
+        fn to_value(&self, dat_type: &DatType) -> RS<DatValue> {
+            entity_utils::entity_to_value(self, dat_type)
+        }
+
+        fn clone_boxed(&self) -> Box<dyn DatumDyn> {
+            entity_utils::entity_clone_boxed(self)
+        }
+    }
+
+    impl Entity for Users {
         fn new_empty() -> Self {
             let s = Self {
                 user_id: None,
@@ -136,55 +185,100 @@ pub mod object {
             &TUPLE_DESC
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_USERS
         }
 
-        fn from_tuple<T: AsRef<TupleField>, D: AsRef<TupleFieldDesc>>(row: T, desc: D) -> RS<Self> {
-            record_from_tuple::<Self, T, D>(row, desc)
-        }
-
-        fn to_tuple<D: AsRef<TupleFieldDesc>>(&self, desc: D) -> RS<TupleField> {
-            record_to_tuple(self, desc)
-        }
-
-        fn get_binary(&self, column: &str) -> RS<Option<Vec<u8>>> {
+        fn get_field_binary(&self, column: &str) -> RS<Option<Vec<u8>>> {
             match column {
-                COLUMN_USER_ID => attr_get_binary(&self.user_id),
-                COLUMN_NAME => attr_get_binary(&self.name),
-                COLUMN_PHONE => attr_get_binary(&self.phone),
-                COLUMN_EMAIL => attr_get_binary(&self.email),
-                COLUMN_PASSWORD => attr_get_binary(&self.password),
-                COLUMN_CREATED_AT => attr_get_binary(&self.created_at),
-                COLUMN_UPDATED_AT => attr_get_binary(&self.updated_at),
+                COLUMN_USER_ID => attr_field_access::attr_get_binary::<_>(&self.user_id),
+                COLUMN_NAME => attr_field_access::attr_get_binary::<_>(&self.name),
+                COLUMN_PHONE => attr_field_access::attr_get_binary::<_>(&self.phone),
+                COLUMN_EMAIL => attr_field_access::attr_get_binary::<_>(&self.email),
+                COLUMN_PASSWORD => attr_field_access::attr_get_binary::<_>(&self.password),
+                COLUMN_CREATED_AT => attr_field_access::attr_get_binary::<_>(&self.created_at),
+                COLUMN_UPDATED_AT => attr_field_access::attr_get_binary::<_>(&self.updated_at),
                 _ => {
                     panic!("unknown name");
                 }
             }
         }
 
-        fn set_binary<B: AsRef<[u8]>>(&mut self, column: &str, binary: B) -> RS<()> {
+        fn set_field_binary<B: AsRef<[u8]>>(&mut self, column: &str, binary: B) -> RS<()> {
             match column {
                 COLUMN_USER_ID => {
-                    attr_set_binary(&mut self.user_id, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(&mut self.user_id, binary.as_ref())?;
                 }
                 COLUMN_NAME => {
-                    attr_set_binary(&mut self.name, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(&mut self.name, binary.as_ref())?;
                 }
                 COLUMN_PHONE => {
-                    attr_set_binary(&mut self.phone, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(&mut self.phone, binary.as_ref())?;
                 }
                 COLUMN_EMAIL => {
-                    attr_set_binary(&mut self.email, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(&mut self.email, binary.as_ref())?;
                 }
                 COLUMN_PASSWORD => {
-                    attr_set_binary(&mut self.password, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(
+                        &mut self.password,
+                        binary.as_ref(),
+                    )?;
                 }
                 COLUMN_CREATED_AT => {
-                    attr_set_binary(&mut self.created_at, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(
+                        &mut self.created_at,
+                        binary.as_ref(),
+                    )?;
                 }
                 COLUMN_UPDATED_AT => {
-                    attr_set_binary(&mut self.updated_at, binary.as_ref())?;
+                    attr_field_access::attr_set_binary::<_, _>(
+                        &mut self.updated_at,
+                        binary.as_ref(),
+                    )?;
+                }
+                _ => {
+                    panic!("unknown name");
+                }
+            }
+            Ok(())
+        }
+        fn get_field_value(&self, column: &str) -> RS<Option<DatValue>> {
+            match column {
+                COLUMN_USER_ID => attr_field_access::attr_get_value::<_>(&self.user_id),
+                COLUMN_NAME => attr_field_access::attr_get_value::<_>(&self.name),
+                COLUMN_PHONE => attr_field_access::attr_get_value::<_>(&self.phone),
+                COLUMN_EMAIL => attr_field_access::attr_get_value::<_>(&self.email),
+                COLUMN_PASSWORD => attr_field_access::attr_get_value::<_>(&self.password),
+                COLUMN_CREATED_AT => attr_field_access::attr_get_value::<_>(&self.created_at),
+                COLUMN_UPDATED_AT => attr_field_access::attr_get_value::<_>(&self.updated_at),
+                _ => {
+                    panic!("unknown name");
+                }
+            }
+        }
+
+        fn set_field_value<B: AsRef<DatValue>>(&mut self, column: &str, value: B) -> RS<()> {
+            match column {
+                COLUMN_USER_ID => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.user_id, value)?;
+                }
+                COLUMN_NAME => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.name, value)?;
+                }
+                COLUMN_PHONE => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.phone, value)?;
+                }
+                COLUMN_EMAIL => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.email, value)?;
+                }
+                COLUMN_PASSWORD => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.password, value)?;
+                }
+                COLUMN_CREATED_AT => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.created_at, value)?;
+                }
+                COLUMN_UPDATED_AT => {
+                    attr_field_access::attr_set_value::<_, _>(&mut self.updated_at, value)?;
                 }
                 _ => {
                     panic!("unknown name");
@@ -194,311 +288,157 @@ pub mod object {
         }
     }
 
-    pub struct AttrUserId {
-        value: i32,
-    }
-
-    impl AttrUserId {}
-
-    impl AttrBinary for AttrUserId {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: i32 = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrUserId {}
 
     impl AttrValue<i32> for AttrUserId {
-        fn new(datum: i32) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_USERS
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_USER_ID
         }
-
-        fn get_value(&self) -> i32 {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: i32) {
-            self.value = value;
-        }
     }
 
-    pub struct AttrName {
-        value: String,
-    }
-
-    impl AttrName {}
-
-    impl AttrBinary for AttrName {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: String = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrName {}
 
     impl AttrValue<String> for AttrName {
-        fn new(datum: String) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_USERS
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_NAME
         }
-
-        fn get_value(&self) -> String {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: String) {
-            self.value = value;
-        }
     }
 
-    pub struct AttrPhone {
-        value: String,
-    }
-
-    impl AttrPhone {}
-
-    impl AttrBinary for AttrPhone {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: String = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrPhone {}
 
     impl AttrValue<String> for AttrPhone {
-        fn new(datum: String) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_USERS
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_PHONE
         }
-
-        fn get_value(&self) -> String {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: String) {
-            self.value = value;
-        }
     }
 
-    pub struct AttrEmail {
-        value: String,
-    }
-
-    impl AttrEmail {}
-
-    impl AttrBinary for AttrEmail {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: String = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrEmail {}
 
     impl AttrValue<String> for AttrEmail {
-        fn new(datum: String) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_USERS
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_EMAIL
         }
-
-        fn get_value(&self) -> String {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: String) {
-            self.value = value;
-        }
     }
 
-    pub struct AttrPassword {
-        value: String,
-    }
-
-    impl AttrPassword {}
-
-    impl AttrBinary for AttrPassword {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: String = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrPassword {}
 
     impl AttrValue<String> for AttrPassword {
-        fn new(datum: String) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_USERS
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_PASSWORD
         }
-
-        fn get_value(&self) -> String {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: String) {
-            self.value = value;
-        }
     }
 
-    pub struct AttrCreatedAt {
-        value: i32,
-    }
-
-    impl AttrCreatedAt {}
-
-    impl AttrBinary for AttrCreatedAt {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: i32 = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrCreatedAt {}
 
     impl AttrValue<i32> for AttrCreatedAt {
-        fn new(datum: i32) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_USERS
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_CREATED_AT
         }
-
-        fn get_value(&self) -> i32 {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: i32) {
-            self.value = value;
-        }
     }
 
-    pub struct AttrUpdatedAt {
-        value: i32,
-    }
-
-    impl AttrUpdatedAt {}
-
-    impl AttrBinary for AttrUpdatedAt {
-        fn get_binary(&self) -> RS<Vec<u8>> {
-            datum_to_binary(&self.value)
-        }
-
-        fn set_binary<D: AsRef<[u8]>>(&mut self, binary: D) -> RS<()> {
-            let value: i32 = datum_from_binary(binary.as_ref())?;
-            self.set_value(value);
-            Ok(())
-        }
-    }
+    pub struct AttrUpdatedAt {}
 
     impl AttrValue<i32> for AttrUpdatedAt {
-        fn new(datum: i32) -> Self {
-            Self { value: datum }
+        fn dat_type() -> &'static DatType {
+            static ONCE_LOCK: std::sync::OnceLock<DatType> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_dat_type())
         }
 
-        fn from_binary<B: AsRef<[u8]>>(binary: B) -> RS<Self> {
-            Ok(Self::new(datum_from_binary(binary)?))
+        fn datum_desc() -> &'static DatumDesc {
+            static ONCE_LOCK: std::sync::OnceLock<DatumDesc> = std::sync::OnceLock::new();
+            ONCE_LOCK.get_or_init(|| Self::attr_datum_desc())
         }
 
-        fn table_name() -> &'static str {
+        fn object_name() -> &'static str {
             TABLE_USERS
         }
 
-        fn column_name() -> &'static str {
+        fn attr_name() -> &'static str {
             COLUMN_UPDATED_AT
-        }
-
-        fn get_value(&self) -> i32 {
-            self.value.clone()
-        }
-
-        fn set_value(&mut self, value: i32) {
-            self.value = value;
         }
     }
 } // end mod object

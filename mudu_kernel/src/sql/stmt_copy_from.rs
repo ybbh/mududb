@@ -2,11 +2,11 @@ use crate::command::load_from_file::LoadFromFile;
 use crate::contract::cmd_exec::CmdExec;
 use crate::contract::ssn_ctx::SsnCtx;
 use crate::sql::stmt_cmd::StmtCmd;
-use crate::sync::s_mutex::SMutex;
 use async_trait::async_trait;
 use mudu::common::id::OID;
 use mudu::common::result::RS;
 use mudu::tuple::tuple_field_desc::TupleFieldDesc as TupleDesc;
+use mudu_utils::sync::s_mutex::SMutex;
 use std::fmt::Debug;
 use std::sync::Arc;
 

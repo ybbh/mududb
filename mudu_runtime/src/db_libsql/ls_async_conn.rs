@@ -3,15 +3,15 @@ use crate::db_libsql::ls_desc;
 use crate::db_libsql::ls_trans::LSTrans;
 use as_slice::AsSlice;
 use lazy_static::lazy_static;
-use libsql::{Builder, Connection, Database, Error, params};
+use libsql::{params, Builder, Connection, Database, Error};
 use mudu::common::result::RS;
 use mudu::common::xid::XID;
+use mudu::data_type::datum::{AsDatumDynRef, DatumDyn};
 use mudu::database::result_set::ResultSet;
 use mudu::database::sql_params::SQLParams;
 use mudu::database::sql_stmt::{AsSQLStmtRef, SQLStmt};
 use mudu::error::ec::EC;
 use mudu::m_error;
-use mudu::tuple::datum::{AsDatumDynRef, DatumDyn};
 use mudu::tuple::datum_desc::DatumDesc;
 use mudu::tuple::tuple_field_desc::TupleFieldDesc;
 use scc::HashMap;
@@ -128,7 +128,7 @@ impl LSSyncConn {
             let boxed = datum.clone_boxed();
             params_boxed.push(boxed);
         }
-        let desc = param.tuple_desc()?;
+        let desc = param.param_tuple_desc()?;
 
         self.inner
             .async_query(sql_boxed, params_boxed.as_slice(), desc.into_fields())
@@ -143,7 +143,7 @@ impl LSSyncConn {
             let boxed = datum.clone_boxed();
             params_boxed.push(boxed);
         }
-        let desc = param.tuple_desc()?;
+        let desc = param.param_tuple_desc()?;
         self.inner
             .async_command(sql_text, params_boxed, desc.into_fields())
     }
@@ -154,6 +154,10 @@ impl LSSyncConn {
 
     pub fn sync_rollback(&self) -> RS<()> {
         self.inner.async_rollback()
+    }
+
+    pub fn libsql_connection(&self) -> Connection {
+        self.inner.conn.clone()
     }
 }
 
@@ -229,7 +233,7 @@ impl LSAsyncConnInner {
         }
     }
 
-    fn async_query<SQL: AsSQLStmtRef, PARAMS: AsSlice<Element = Item>, Item: AsDatumDynRef>(
+    fn async_query<SQL: AsSQLStmtRef, PARAMS: AsSlice<Element=Item>, Item: AsDatumDynRef>(
         &self,
         sql: SQL,
         param: PARAMS,
@@ -274,7 +278,7 @@ impl LSAsyncConnInner {
             async move |tx, s| tx.query(&s, params!([]), _desc.clone()).await,
             &sql,
         )
-        .await?;
+            .await?;
         Ok((rs, result_desc))
     }
 
@@ -302,8 +306,8 @@ impl LSAsyncConnInner {
             let _s = &sql_string[start_pos..vec_indices[i].0];
             sql_after_replaced.push_str(_s);
             sql_after_replaced.push_str(" ");
-            let s = param[i].to_printable(desc[i].dat_type().param())?;
-            sql_after_replaced.push_str(s.str());
+            let s = param[i].to_textual(desc[i].dat_type())?;
+            sql_after_replaced.push_str(s.as_str());
             sql_after_replaced.push_str(" ");
             start_pos += _s.len() + placeholder_str_len;
         }
@@ -332,7 +336,7 @@ impl LSAsyncConnInner {
             async move |tx, s| tx.command(&s, params!([])).await,
             &sql,
         )
-        .await?;
+            .await?;
         Ok(affected_rows)
     }
 
