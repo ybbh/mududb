@@ -1,11 +1,16 @@
 use mudu::common::id::OID;
 use mudu::common::result::RS;
+use mudu::error::ec::EC;
+use mudu::m_error;
+use mudu_contract::database::result_set::ResultSetAsync;
 use mudu_contract::protocol::{
     encode_get_response, encode_procedure_invoke_response, encode_put_response,
     encode_range_scan_response, encode_session_close_response, encode_session_create_response,
-    GetResponse, KeyValue, ProcedureInvokeResponse, PutResponse, RangeScanResponse,
+    encode_server_response, GetResponse, KeyValue, ProcedureInvokeResponse, PutResponse,
+    RangeScanResponse, ServerResponse,
     SessionCloseResponse, SessionCreateResponse,
 };
+use mudu_type::datum::DatumDyn;
 use std::sync::Arc;
 
 use crate::server::async_func_task::HandleResult;
@@ -120,6 +125,51 @@ impl RequestCtx {
         )?))
     }
 
+    pub(in crate::server) async fn query(
+        &self,
+        oid: OID,
+        app_name: &str,
+        sql: &str,
+    ) -> RS<HandleResult> {
+        let _ = app_name;
+        let response = self
+            .worker
+            .query(oid, Box::new(sql.to_string()), Box::new(()))
+            .await?;
+        let response = Self::query_response(response).await?;
+        self.encode_server_response(response)
+    }
+
+    pub(in crate::server) async fn execute_sql(
+        &self,
+        oid: OID,
+        app_name: &str,
+        sql: &str,
+    ) -> RS<HandleResult> {
+        let _ = app_name;
+        let affected_rows = self
+            .worker
+            .execute(oid, Box::new(sql.to_string()), Box::new(()))
+            .await?;
+        let response = ServerResponse::new(Vec::new(), Vec::new(), affected_rows, None);
+        self.encode_server_response(response)
+    }
+
+    pub(in crate::server) async fn batch(
+        &self,
+        oid: OID,
+        app_name: &str,
+        sql: &str,
+    ) -> RS<HandleResult> {
+        let _ = app_name;
+        let affected_rows = self
+            .worker
+            .batch(oid, Box::new(sql.to_string()), Box::new(()))
+            .await?;
+        let response = ServerResponse::new(Vec::new(), Vec::new(), affected_rows, None);
+        self.encode_server_response(response)
+    }
+
     pub(in crate::server) async fn session_create(
         &self,
         config: SessionOpenConfig,
@@ -154,5 +204,33 @@ impl RequestCtx {
                     .close_session_for_connection(self.conn_id, session_id)?,
             ),
         )?))
+    }
+
+    fn encode_server_response(&self, response: ServerResponse) -> RS<HandleResult> {
+        Ok(HandleResult::Response(encode_server_response(
+            self.request_id,
+            &response,
+        )?))
+    }
+
+    async fn query_response(result_set: Arc<dyn ResultSetAsync>) -> RS<ServerResponse> {
+        let desc = result_set.desc();
+        let columns = desc
+            .fields()
+            .iter()
+            .map(|field| field.name().to_string())
+            .collect();
+        let mut rows = Vec::new();
+        while let Some(row) = result_set.next().await? {
+            if row.values().len() != desc.fields().len() {
+                return Err(m_error!(EC::FatalError, "non consistent column number"));
+            }
+            let mut values = Vec::with_capacity(row.values().len());
+            for (value, field_desc) in row.values().iter().zip(desc.fields().iter()) {
+                values.push(value.to_textual(field_desc.dat_type())?.into());
+            }
+            rows.push(values);
+        }
+        Ok(ServerResponse::new(columns, rows, 0, None))
     }
 }

@@ -1,7 +1,6 @@
 use crate::server::routing::{route_worker, RoutingContext, RoutingMode};
 use crate::server::server::{IoUringTcpBackend, IoUringTcpServerConfig};
 use crate::server::worker_registry::{load_or_create_worker_registry, WorkerRegistry};
-use tracing::log::info;
 use mudu::common::result::RS;
 use mudu::error::ec::EC;
 use mudu::error::err::MError;
@@ -22,7 +21,7 @@ use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::ops::RangeInclusive;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -30,6 +29,7 @@ use tokio::net::{TcpSocket as TokioTcpSocket, TcpStream as TokioTcpStream};
 use tokio::sync::Notify;
 use tokio::task::JoinSet;
 use tracing::debug;
+use tracing::info;
 use uuid::Uuid;
 
 struct AsyncPerfClient {
@@ -185,6 +185,11 @@ fn reserve_listener() -> Option<TcpListener> {
     }
     eprintln!("skip io_uring perf test: unable to reserve a port outside ephemeral range");
     None
+}
+
+fn network_perf_test_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 fn bind_reserved_listener(port: u16) -> std::io::Result<TcpListener> {
@@ -400,6 +405,7 @@ fn avg_us(samples: &[u64]) -> Option<f64> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn iouring_backend_perf_put_get() -> RS<()> {
+    let _guard = network_perf_test_lock().lock().unwrap();
     log_setup("info");
     let notifier = NotifyWait::new();
     {
@@ -599,6 +605,7 @@ async fn iouring_backend_perf_put_get() -> RS<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn iouring_backend_recovery_replays_worker_logs() -> RS<()> {
+    let _guard = network_perf_test_lock().lock().unwrap();
     let Some(listener) = reserve_listener() else {
         return Ok(());
     };
@@ -674,6 +681,7 @@ async fn iouring_backend_recovery_replays_worker_logs() -> RS<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn iouring_backend_recovery_replays_across_multiple_chunks() -> RS<()> {
+    let _guard = network_perf_test_lock().lock().unwrap();
     let Some(listener) = reserve_listener() else {
         return Ok(());
     };
@@ -738,6 +746,7 @@ async fn iouring_backend_recovery_replays_across_multiple_chunks() -> RS<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn iouring_backend_open_session_routes_connection_to_requested_partition() -> RS<()> {
+    let _guard = network_perf_test_lock().lock().unwrap();
     let Some(listener) = reserve_listener() else {
         return Ok(());
     };
@@ -814,6 +823,7 @@ async fn iouring_backend_open_session_routes_connection_to_requested_partition()
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn iouring_backend_open_session_rebind_keeps_same_session_id() -> RS<()> {
+    let _guard = network_perf_test_lock().lock().unwrap();
     let Some(listener) = reserve_listener() else {
         return Ok(());
     };

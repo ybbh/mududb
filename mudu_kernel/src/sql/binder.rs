@@ -94,16 +94,29 @@ impl Binder {
         stmt.assign_index_for_columns();
         let key_columns = stmt
             .primary_columns()
-            .iter()
+            .into_iter()
             .map(Self::schema_column_from_ast)
             .collect::<RS<Vec<_>>>()?;
         let value_columns = stmt
             .non_primary_columns()
-            .iter()
+            .into_iter()
             .map(Self::schema_column_from_ast)
             .collect::<RS<Vec<_>>>()?;
+        let mut columns = key_columns;
+        let value_offset = columns.len();
+        let mut value_columns = value_columns;
+        let key_indices = (0..columns.len()).collect();
+        let value_indices = (0..value_columns.len())
+            .map(|index| index + value_offset)
+            .collect();
+        columns.append(&mut value_columns);
         Ok(BoundCreateTable {
-            schema: SchemaTable::new(stmt.table_name().clone(), key_columns, value_columns),
+            schema: SchemaTable::new(
+                stmt.table_name().clone(),
+                columns,
+                key_indices,
+                value_indices,
+            ),
         })
     }
 
@@ -137,7 +150,7 @@ impl Binder {
         }
 
         let columns = if stmt.columns().is_empty() {
-            let total = table_desc.key_info().len() + table_desc.value_info().len();
+            let total = table_desc.fields().len();
             (0..total)
                 .map(|attr| table_desc.get_attr(attr).name().clone())
                 .collect::<Vec<_>>()
@@ -158,7 +171,7 @@ impl Binder {
             let field = table_desc.get_attr(attr);
             let binary =
                 ValueCodec::binary_from_expr(expr, field.type_desc(), params, &mut param_index)?;
-            if field.is_primary() {
+            if field.primary_index().is_some() {
                 key.push((attr, binary));
             } else {
                 value.push((attr, binary));
@@ -208,7 +221,7 @@ impl Binder {
         for assignment in stmt.get_set_values() {
             let attr = self.attr_index_by_name(&table_desc, assignment.get_column_reference())?;
             let field = table_desc.get_attr(attr);
-            if field.is_primary() {
+            if field.primary_index().is_some() {
                 return Err(m_error!(
                     ER::NotImplemented,
                     "updating primary key columns is not implemented"
@@ -282,7 +295,7 @@ impl Binder {
                 })?;
             let attr = self.attr_index_by_name(table_desc, field_name)?;
             let field = table_desc.get_attr(attr);
-            if !field.is_primary() {
+            if field.primary_index().is_none() {
                 return Err(m_error!(
                     ER::NotImplemented,
                     "non-key predicates are not implemented"
@@ -341,15 +354,15 @@ impl Binder {
     ) -> RS<Vec<(usize, Vec<u8>)>> {
         match self.bind_predicate_from(table_desc, predicates, params, param_index)? {
             BoundPredicate::KeyEq { mut key } => {
-                if key.len() != table_desc.key_info().len() {
+                if key.len() != table_desc.key_indices().len() {
                     return Err(m_error!(
                         ER::NotImplemented,
                         "update/delete require a complete primary key predicate"
                     ));
                 }
-                key.sort_by_key(|(attr, _)| *attr);
+                key.sort_by_key(|(attr, _)| table_desc.get_attr(*attr).primary_index().unwrap());
                 for (index, (attr, _)) in key.iter().enumerate() {
-                    if *attr != index {
+                    if table_desc.get_attr(*attr).primary_index() != Some(index) {
                         return Err(m_error!(
                             ER::NotImplemented,
                             "update/delete require one equality predicate for each primary key column"
@@ -387,14 +400,7 @@ impl Binder {
     }
 
     fn reverse_compare(op: ValueCompare) -> ValueCompare {
-        match op {
-            ValueCompare::EQ => ValueCompare::EQ,
-            ValueCompare::LE => ValueCompare::GT,
-            ValueCompare::LT => ValueCompare::GE,
-            ValueCompare::GE => ValueCompare::LT,
-            ValueCompare::GT => ValueCompare::LE,
-            ValueCompare::NE => ValueCompare::NE,
-        }
+        ValueCompare::revert_cmp_op(op)
     }
 
     fn schema_column_from_ast(column: &sql_parser::ast::column_def::ColumnDef) -> RS<SchemaColumn> {
@@ -404,7 +410,7 @@ impl Binder {
             ty.dat_type_id(),
             DTInfo::from_opt_object(&ty),
         );
-        schema_column.set_primary(column.is_primary_key());
+        schema_column.set_primary_index(column.primary_key_index());
         schema_column.set_index(column.column_index());
         Ok(schema_column)
     }
@@ -421,7 +427,7 @@ impl Binder {
     }
 
     fn attr_index_by_name(&self, table_desc: &TableDesc, name: &str) -> RS<usize> {
-        let total = table_desc.key_info().len() + table_desc.value_info().len();
+        let total = table_desc.fields().len();
         (0..total)
             .find(|attr| table_desc.get_attr(*attr).name() == name)
             .ok_or_else(|| m_error!(ER::NoSuchElement, format!("cannot find column {}", name)))
@@ -431,6 +437,6 @@ impl Binder {
         self.meta_mgr
             .get_table_by_name(name)
             .await?
-            .ok_or_else(|| m_error!(ER::NoSuchElement, format!("cannot find table {}", name)))
+            .ok_or_else(|| m_error!(ER::NoSuchElement, format!("no such table {}", name)))
     }
 }

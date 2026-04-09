@@ -12,6 +12,10 @@ const PARTITION_MARKER_SUFFIX: &str = ".pid";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerIdentity {
+    // Workers are provisioned according to execution resources such as CPU cores,
+    // whereas partitions are defined by user-level data partitioning.
+    // Partitions are not automatically required to map one-to-one to workers.
+    // A worker may own multiple partitions in the future.
     pub worker_index: usize,
     pub worker_id: OID,
     pub partition_ids: Vec<OID>,

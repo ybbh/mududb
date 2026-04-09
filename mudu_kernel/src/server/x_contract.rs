@@ -1,22 +1,22 @@
 use async_trait::async_trait;
+use futures::executor::block_on;
 use mudu::common::buf::Buf;
 use mudu::common::id::{AttrIndex, OID};
 use mudu::common::result::RS;
-use mudu::common::xid::XID;
 use mudu::error::ec::EC;
 use mudu::m_error;
 use mudu_contract::tuple::build_tuple::build_tuple;
 use mudu_contract::tuple::tuple_binary::TupleBinary as TupleRaw;
 use mudu_contract::tuple::update_tuple::update_tuple;
-use std::collections::HashMap;
 use std::ops::Bound;
 use std::sync::{Arc, Mutex};
 
 use crate::contract::meta_mgr::MetaMgr;
 use crate::contract::schema_table::SchemaTable;
 use crate::contract::table_desc::TableDesc;
+use crate::meta::meta_mgr_factory::MetaMgrFactory;
 use crate::server::worker_snapshot::{KvItem, WorkerSnapshot, WorkerSnapshotMgr};
-use crate::server::worker_storage::{PreparedWorkerCommit, WorkerStorage};
+use crate::server::worker_storage::WorkerStorage;
 use crate::server::worker_tx_manager::WorkerTxManager;
 use crate::server::x_lock_mgr::XLockMgr;
 use crate::wal::worker_log::ChunkedWorkerLogBackend;
@@ -25,20 +25,16 @@ use crate::x_engine::api::{
     AlterTable, Filter, OptDelete, OptInsert, OptRead, OptUpdate, Predicate, RSCursor, RangeData,
     TupleRow, VecDatum, VecSelTerm, XContract,
 };
+use crate::x_engine::tx_mgr::TxMgr;
 type DatBin = Buf;
 
 pub struct IoUringXContract {
-    inner: Mutex<IoUringXContractInner>,
-    // commit_gate: AsyncMutex<()>,
-}
-
-struct IoUringXContractInner {
     meta_mgr: Arc<dyn MetaMgr>,
     storage: Arc<WorkerStorage>,
     log: Option<ChunkedWorkerLogBackend>,
     snapshot_mgr: WorkerSnapshotMgr,
-    tx_ctx: HashMap<XID, WorkerTxManager>,
     tx_lock: XLockMgr,
+    // commit_gate: AsyncMutex<()>,
 }
 
 struct VecCursor {
@@ -65,15 +61,17 @@ impl IoUringXContract {
         partition_id: OID,
         data_dir: String,
     ) -> Self {
+        let storage = Arc::new(WorkerStorage::new(meta_mgr.clone(), partition_id, data_dir));
+        storage.register_global();
+        storage
+            .bootstrap_existing_tables_sync()
+            .unwrap_or_else(|e| panic!("bootstrap worker storage from meta failed: {e}"));
         Self {
-            inner: Mutex::new(IoUringXContractInner {
-                meta_mgr: meta_mgr.clone(),
-                storage: Arc::new(WorkerStorage::new(meta_mgr, partition_id, data_dir)),
-                log,
-                snapshot_mgr: WorkerSnapshotMgr::default(),
-                tx_ctx: HashMap::new(),
-                tx_lock: XLockMgr::new(),
-            }),
+            meta_mgr: meta_mgr.clone(),
+            storage,
+            log,
+            snapshot_mgr: WorkerSnapshotMgr::default(),
+            tx_lock: XLockMgr::new(),
         }
     }
 
@@ -86,46 +84,30 @@ impl IoUringXContract {
         partition_id: OID,
         data_dir: String,
     ) -> Self {
-        let meta_mgr: Arc<dyn MetaMgr> = Arc::new(NoopMetaMgr);
-        Self {
-            inner: Mutex::new(IoUringXContractInner {
-                meta_mgr: meta_mgr.clone(),
-                storage: Arc::new(WorkerStorage::new(meta_mgr, partition_id, data_dir)),
-                log: Some(log.clone()),
-                snapshot_mgr: WorkerSnapshotMgr::default(),
-                tx_ctx: HashMap::new(),
-                tx_lock: XLockMgr::new(),
-            }),
-        }
-    }
-
-    fn lock_inner(&self) -> RS<std::sync::MutexGuard<'_, IoUringXContractInner>> {
-        self.inner
-            .lock()
-            .map_err(|_| m_error!(EC::InternalErr, "io_uring xcontract lock poisoned"))
+        let meta_mgr = MetaMgrFactory::create(data_dir.clone())
+            .unwrap_or_else(|e| panic!("create worker meta manager failed: {e}"));
+        Self::with_log_and_data_dir(meta_mgr, Some(log.clone()), partition_id, data_dir)
     }
 
     pub fn worker_log(&self) -> Option<ChunkedWorkerLogBackend> {
-        self.lock_inner().ok().and_then(|guard| guard.log.clone())
+        self.log.clone()
     }
 
-    pub fn worker_begin_tx(&self) -> RS<WorkerSnapshot> {
-        let mut guard = self.lock_inner()?;
-        Ok(guard.snapshot_mgr.begin_tx())
+    pub fn worker_begin_tx(&self) -> RS<Arc<dyn TxMgr>> {
+        Ok(Arc::new(WorkerTxManager::new(self.snapshot_mgr.begin_tx())))
     }
 
-    pub fn worker_rollback_tx(&self, xid: u64) -> RS<()> {
-        self.lock_inner()?.snapshot_mgr.end_tx(xid)
+    pub fn worker_rollback_tx(&self, tx_mgr: Arc<dyn TxMgr>) -> RS<()> {
+        self.snapshot_mgr.end_tx(tx_mgr.xid())
     }
 
     pub fn worker_put(&self, key: Vec<u8>, value: Vec<u8>) -> RS<()> {
         let prepared = {
-            let mut guard = self.lock_inner()?;
-            let xid = guard.snapshot_mgr.alloc_committed_ts();
+            let xid = self.snapshot_mgr.alloc_committed_ts();
             (
-                guard.storage.clone(),
-                guard.log.clone(),
-                guard.storage.prepare_worker_kv_autocommit(
+                self.storage.clone(),
+                self.log.clone(),
+                self.storage.prepare_worker_kv_autocommit(
                     xid,
                     key.clone(),
                     Some(value.clone()),
@@ -142,12 +124,11 @@ impl IoUringXContract {
 
     pub async fn worker_put_async(&self, key: Vec<u8>, value: Vec<u8>) -> RS<()> {
         let (storage, log, prepared) = {
-            let mut guard = self.lock_inner()?;
-            let xid = guard.snapshot_mgr.alloc_committed_ts();
+            let xid = self.snapshot_mgr.alloc_committed_ts();
             (
-                guard.storage.clone(),
-                guard.log.clone(),
-                guard.storage.prepare_worker_kv_autocommit(
+                self.storage.clone(),
+                self.log.clone(),
+                self.storage.prepare_worker_kv_autocommit(
                     xid,
                     key.clone(),
                     Some(value.clone()),
@@ -158,18 +139,17 @@ impl IoUringXContract {
         if let Some(log) = log {
             new_xl_batch_writer(log).append(prepared.batch()).await?;
         }
-        storage.apply_prepared_commit(prepared)
+        storage.apply_prepared_commit_async(prepared).await
     }
 
     pub fn worker_delete(&self, key: &[u8]) -> RS<()> {
         let key = key.to_vec();
         let prepared = {
-            let mut guard = self.lock_inner()?;
-            let xid = guard.snapshot_mgr.alloc_committed_ts();
+            let xid = self.snapshot_mgr.alloc_committed_ts();
             (
-                guard.storage.clone(),
-                guard.log.clone(),
-                guard.storage.prepare_worker_kv_autocommit(
+                self.storage.clone(),
+                self.log.clone(),
+                self.storage.prepare_worker_kv_autocommit(
                     xid,
                     key.clone(),
                     None,
@@ -187,12 +167,11 @@ impl IoUringXContract {
     pub async fn worker_delete_async(&self, key: &[u8]) -> RS<()> {
         let key = key.to_vec();
         let (storage, log, prepared) = {
-            let mut guard = self.lock_inner()?;
-            let xid = guard.snapshot_mgr.alloc_committed_ts();
+            let xid = self.snapshot_mgr.alloc_committed_ts();
             (
-                guard.storage.clone(),
-                guard.log.clone(),
-                guard.storage.prepare_worker_kv_autocommit(
+                self.storage.clone(),
+                self.log.clone(),
+                self.storage.prepare_worker_kv_autocommit(
                     xid,
                     key.clone(),
                     None,
@@ -203,12 +182,23 @@ impl IoUringXContract {
         if let Some(log) = log {
             new_xl_batch_writer(log).append(prepared.batch()).await?;
         }
-        storage.apply_prepared_commit(prepared)
+        storage.apply_prepared_commit_async(prepared).await
+    }
+
+    pub async fn worker_get_async(&self, key: &[u8]) -> RS<Option<Vec<u8>>> {
+        self.storage.kv_get(key, None).await
+    }
+
+    pub async fn worker_get_with_snapshot_async(
+        &self,
+        snapshot: &WorkerSnapshot,
+        key: &[u8],
+    ) -> RS<Option<Vec<u8>>> {
+        self.storage.kv_get(key, Some(snapshot)).await
     }
 
     pub fn worker_get(&self, key: &[u8]) -> RS<Option<Vec<u8>>> {
-        let storage = { self.lock_inner()?.storage.clone() };
-        storage.worker_get(key, None)
+        block_on(self.storage.kv_get(key, None))
     }
 
     pub fn worker_get_with_snapshot(
@@ -216,13 +206,19 @@ impl IoUringXContract {
         snapshot: &WorkerSnapshot,
         key: &[u8],
     ) -> RS<Option<Vec<u8>>> {
-        let storage = { self.lock_inner()?.storage.clone() };
-        storage.worker_get(key, Some(snapshot))
+        block_on(self.storage.kv_get(key, Some(snapshot)))
     }
 
     pub fn worker_range_scan(&self, start_key: &[u8], end_key: &[u8]) -> RS<Vec<KvItem>> {
-        let storage = { self.lock_inner()?.storage.clone() };
-        storage.worker_range(start_key, end_key, None)
+        block_on(self.storage.kv_range(start_key, end_key, None))
+    }
+
+    pub async fn worker_range_scan_async(
+        &self,
+        start_key: &[u8],
+        end_key: &[u8],
+    ) -> RS<Vec<KvItem>> {
+        self.storage.kv_range(start_key, end_key, None).await
     }
 
     pub fn worker_range_scan_with_snapshot(
@@ -231,8 +227,18 @@ impl IoUringXContract {
         start_key: &[u8],
         end_key: &[u8],
     ) -> RS<Vec<KvItem>> {
-        let storage = { self.lock_inner()?.storage.clone() };
-        storage.worker_range(start_key, end_key, Some(snapshot))
+        block_on(self.storage.kv_range(start_key, end_key, Some(snapshot)))
+    }
+
+    pub async fn worker_range_scan_with_snapshot_async(
+        &self,
+        snapshot: &WorkerSnapshot,
+        start_key: &[u8],
+        end_key: &[u8],
+    ) -> RS<Vec<KvItem>> {
+        self.storage
+            .kv_range(start_key, end_key, Some(snapshot))
+            .await
     }
 
     pub fn worker_commit_put_batch(
@@ -243,21 +249,20 @@ impl IoUringXContract {
         batch: XLBatch,
     ) -> RS<()> {
         if items.is_empty() {
-            return self.worker_rollback_tx(xid);
+            return self.snapshot_mgr.end_tx(xid);
         }
         let (storage, log, prepared) = {
-            let guard = self.lock_inner()?;
-            let prepared = guard
+            let prepared = self
                 .storage
                 .prepare_worker_kv_commit(snapshot, xid, items, batch)?;
-            (guard.storage.clone(), guard.log.clone(), prepared)
+            (self.storage.clone(), self.log.clone(), prepared)
         };
         if let Some(log) = log {
             new_xl_batch_writer(log.clone()).append_sync(prepared.batch())?;
             log.flush()?;
         }
         storage.apply_prepared_commit(prepared)?;
-        self.worker_rollback_tx(xid)
+        self.snapshot_mgr.end_tx(xid)
     }
 
     pub async fn worker_commit_put_batch_async(
@@ -268,14 +273,13 @@ impl IoUringXContract {
         batch: XLBatch,
     ) -> RS<()> {
         if items.is_empty() {
-            return self.worker_rollback_tx(xid);
+            return self.snapshot_mgr.end_tx(xid);
         }
         let (storage, log, prepared) = {
-            let guard = self.lock_inner()?;
-            let prepared = guard
+            let prepared = self
                 .storage
                 .prepare_worker_kv_commit(snapshot, xid, items, batch)?;
-            (guard.storage.clone(), guard.log.clone(), prepared)
+            (self.storage.clone(), self.log.clone(), prepared)
         };
         if let Some(log) = log {
             new_xl_batch_writer(log.clone())
@@ -283,20 +287,81 @@ impl IoUringXContract {
                 .await?;
             log.flush_async().await?;
         }
-        storage.apply_prepared_commit(prepared)?;
-        self.worker_rollback_tx(xid)
+        storage.apply_prepared_commit_async(prepared).await?;
+        self.snapshot_mgr.end_tx(xid)
+    }
+
+    pub fn worker_commit_tx(&self, tx: Arc<dyn TxMgr>) -> RS<()> {
+        let xid = tx.xid();
+        if tx.is_empty() {
+            return self.worker_rollback_tx(tx);
+        }
+        tx.build_write_ops();
+        let (storage, log, prepared) = {
+            let write_ops = tx.write_ops();
+            let can_commit = self.tx_lock.try_lock_some(xid as OID, &write_ops);
+            if !can_commit {
+                return Err(m_error!(
+                    EC::TxErr,
+                    format!("transaction {} failed to acquire commit locks", xid)
+                ));
+            }
+            let prepared = self.storage.prepare_commit(tx.as_ref())?;
+            (self.storage.clone(), self.log.clone(), prepared)
+        };
+        let result = (|| -> RS<()> {
+            if let Some(log) = log {
+                new_xl_batch_writer(log.clone()).append_sync(prepared.batch())?;
+                log.flush()?;
+            }
+            storage.apply_prepared_commit(prepared)?;
+            Ok(())
+        })();
+        let write_ops = tx.write_ops();
+        self.tx_lock.release(xid as OID, &write_ops);
+        self.worker_rollback_tx(tx)?;
+        result
+    }
+
+    pub async fn worker_commit_tx_async(&self, tx: Arc<dyn TxMgr>) -> RS<()> {
+        let xid = tx.xid();
+        if tx.is_empty() {
+            return self.worker_rollback_tx(tx);
+        }
+        tx.build_write_ops();
+        let (storage, log, prepared) = {
+            let write_ops = tx.write_ops();
+            let can_commit = self.tx_lock.try_lock_some(xid as OID, &write_ops);
+            if !can_commit {
+                return Err(m_error!(
+                    EC::TxErr,
+                    format!("transaction {} failed to acquire commit locks", xid)
+                ));
+            }
+            let prepared = self.storage.prepare_commit_async(tx.as_ref()).await?;
+            (self.storage.clone(), self.log.clone(), prepared)
+        };
+        let result = async {
+            if let Some(log) = log {
+                new_xl_batch_writer(log.clone()).append(prepared.batch()).await?;
+                log.flush_async().await?;
+            }
+            storage.apply_prepared_commit_async(prepared).await?;
+            Ok(())
+        }
+        .await;
+        let write_ops = tx.write_ops();
+        self.tx_lock.release(xid as OID, &write_ops);
+        self.worker_rollback_tx(tx)?;
+        result
     }
 
     pub fn replay_worker_log_batch(&self, batch: XLBatch) -> RS<()> {
         let max_xid = batch.entries.iter().map(|entry| entry.xid).max();
-        let storage = {
-            let mut guard = self.lock_inner()?;
-            if let Some(max_xid) = max_xid {
-                guard.snapshot_mgr.observe_committed_ts(max_xid);
-            }
-            guard.storage.clone()
-        };
-        storage.replay_batch(batch)
+        if let Some(max_xid) = max_xid {
+            self.snapshot_mgr.observe_committed_ts(max_xid);
+        }
+        self.storage.replay_batch(batch)
     }
 }
 
@@ -310,86 +375,15 @@ fn default_worker_storage_data_dir() -> String {
         .to_string()
 }
 
-struct NoopMetaMgr;
-
-#[async_trait]
-impl MetaMgr for NoopMetaMgr {
-    async fn get_table_by_id(&self, oid: OID) -> RS<Arc<TableDesc>> {
-        Err(m_error!(
-            EC::NoSuchElement,
-            format!("no such table {} in worker-local io_uring xcontract", oid)
-        ))
+impl IoUringXContract {
+    fn _begin_tx(&self) -> Arc<dyn TxMgr> {
+        Arc::new(WorkerTxManager::new(self.snapshot_mgr.begin_tx()))
     }
 
-    async fn get_table_by_name(&self, _name: &String) -> RS<Option<Arc<TableDesc>>> {
-        Ok(None)
-    }
-
-    async fn create_table(&self, _schema: &SchemaTable) -> RS<()> {
-        Err(m_error!(
-            EC::NotImplemented,
-            "create table is not available in worker-local io_uring xcontract"
-        ))
-    }
-
-    async fn drop_table(&self, _table_id: OID) -> RS<()> {
-        Err(m_error!(
-            EC::NotImplemented,
-            "drop table is not available in worker-local io_uring xcontract"
-        ))
-    }
-}
-
-impl IoUringXContractInner {
-    fn begin_tx(&mut self) -> XID {
-        let snapshot = self.snapshot_mgr.begin_tx();
-        let xid = snapshot.xid() as XID;
-        self.tx_ctx.insert(xid, WorkerTxManager::new(snapshot));
-        xid
-    }
-
-    #[allow(dead_code)]
-    fn commit_tx(&mut self, xid: XID) -> RS<()> {
-        let mut tx = self.take_tx(xid)?;
-        let result = self.storage.commit_tx(&mut tx);
-        self.end_tx(xid);
-        result
-    }
-
-    fn commit_tx_prepare(
-        &mut self,
-        xid: XID,
-    ) -> RS<(
-        Option<PreparedWorkerCommit>,
-        WorkerTxManager,
-        Arc<WorkerStorage>,
-        Option<ChunkedWorkerLogBackend>,
-    )> {
-        let mut tx = self.take_tx(xid)?;
-        tx.build_write_ops();
-        let can_commit = self.tx_lock.try_lock_some(xid, tx.write_ops());
-        if can_commit {
-            let prepared = self.storage.prepare_commit(&tx)?;
-            Ok((Some(prepared), tx, self.storage.clone(), self.log.clone()))
-        } else {
-            Ok((None, tx, self.storage.clone(), self.log.clone()))
-        }
-    }
-
-    fn finish_tx(&mut self, xid: XID) {
-        self.end_tx(xid);
-    }
-
-    fn abort_tx(&mut self, xid: XID) -> RS<()> {
-        let _ = self.take_tx(xid)?;
-        self.end_tx(xid);
-        Ok(())
-    }
-
-    fn insert(
-        &mut self,
+    async fn _insert(
+        & self,
         desc: Arc<TableDesc>,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         keys: &VecDatum,
         values: &VecDatum,
@@ -397,35 +391,35 @@ impl IoUringXContractInner {
     ) -> RS<()> {
         let key = build_key_tuple(keys, &desc)?;
         let value = build_value_tuple(values, &desc)?;
-        let mut tx = self.take_tx(xid)?;
-        let result = self.storage.insert(table_id, key, value, &mut tx);
-        self.tx_ctx.insert(xid, tx);
-        result
+        let contain_key =  self.storage.get(table_id, &key, tx_mgr.as_ref()).await?;
+        if contain_key.is_some() {
+            Err(m_error!(EC::ExistingSuchElement, "existing key"))
+        } else {
+            self.storage.put(table_id, key, value, tx_mgr.as_ref()).await
+        }
     }
 
-    fn read_key(
-        &mut self,
+    async fn _read_key(
+        & self,
         desc: Arc<TableDesc>,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         pred_key: &VecDatum,
         select: &VecSelTerm,
         _opt_read: &OptRead,
     ) -> RS<Option<Vec<DatBin>>> {
         let key = build_key_tuple(pred_key, &desc)?;
-        let mut tx = self.take_tx(xid)?;
-        let opt_value = self.storage.get(table_id, &key, &mut tx)?;
-        self.tx_ctx.insert(xid, tx);
+        let opt_value = self.storage.get(table_id, &key, tx_mgr.as_ref()).await?;
         match opt_value {
             Some(value) => project_selected_fields(&desc, &key, &value, select).map(Some),
             None => Ok(None),
         }
     }
 
-    fn read_range(
-        &mut self,
+    async fn _read_range(
+        & self,
         desc: Arc<TableDesc>,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         pred_key: &RangeData,
         pred_non_key: &Predicate,
@@ -435,9 +429,7 @@ impl IoUringXContractInner {
         ensure_supported_predicate(pred_non_key)?;
         let start = build_bound_key(pred_key.start(), &desc)?;
         let end = build_bound_key(pred_key.end(), &desc)?;
-        let mut tx = self.take_tx(xid)?;
-        let rows = self.storage.range(table_id, (start, end), &mut tx)?;
-        self.tx_ctx.insert(xid, tx);
+        let rows = self.storage.range(table_id, (start, end), tx_mgr.as_ref()).await?;
         let projected = rows
             .into_iter()
             .map(|(key, value)| {
@@ -452,10 +444,10 @@ impl IoUringXContractInner {
         }))
     }
 
-    fn delete(
-        &mut self,
+    async fn _delete(
+        & self,
         desc: Arc<TableDesc>,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         pred_key: &VecDatum,
         pred_non_key: &Predicate,
@@ -463,16 +455,14 @@ impl IoUringXContractInner {
     ) -> RS<usize> {
         ensure_supported_predicate(pred_non_key)?;
         let key = build_key_tuple(pred_key, &desc)?;
-        let mut tx = self.take_tx(xid)?;
-        let deleted = self.storage.remove(table_id, &key, &mut tx)?;
-        self.tx_ctx.insert(xid, tx);
+        let deleted = self.storage.remove(table_id, &key, tx_mgr.as_ref()).await?;
         Ok(usize::from(deleted.is_some()))
     }
 
-    fn update(
-        &mut self,
+    async fn _update(
+        & self,
         desc: Arc<TableDesc>,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         pred_key: &VecDatum,
         pred_non_key: &Predicate,
@@ -481,179 +471,139 @@ impl IoUringXContractInner {
     ) -> RS<usize> {
         ensure_supported_predicate(pred_non_key)?;
         let key = build_key_tuple(pred_key, &desc)?;
-        let mut tx = self.take_tx(xid)?;
-        let current = self.storage.get(table_id, &key, &mut tx)?;
+        let current = self.storage.get(table_id, &key, tx_mgr.as_ref()).await?;
         let Some(current) = current else {
-            self.tx_ctx.insert(xid, tx);
             return Ok(0);
         };
         let updated = apply_value_update(&current, values, &desc)?;
-        let result = self.storage.insert(table_id, key, updated, &mut tx);
-        self.tx_ctx.insert(xid, tx);
-        result.map(|()| 1)
-    }
-
-    fn take_tx(&mut self, xid: XID) -> RS<WorkerTxManager> {
-        self.tx_ctx
-            .remove(&xid)
-            .ok_or_else(|| m_error!(EC::NoSuchElement, format!("no such transaction {}", xid)))
-    }
-
-    fn end_tx(&mut self, xid: XID) {
-        let _ = self.snapshot_mgr.end_tx(xid as u64);
+        self.storage
+            .put(table_id, key, updated, tx_mgr.as_ref())
+            .await
+            .map(|()| 1)
     }
 }
 
 #[async_trait]
 impl XContract for IoUringXContract {
-    async fn create_table(&self, _xid: XID, schema: &SchemaTable) -> RS<()> {
-        let storage = {
-            let guard = self.lock_inner()?;
-            guard.storage.clone()
-        };
-        storage.create_table_async(schema).await
+    async fn create_table(&self, _tx_mgr: Arc<dyn TxMgr>, schema: &SchemaTable) -> RS<()> {
+        self.storage.create_table_async(schema).await
     }
 
-    async fn drop_table(&self, _xid: XID, oid: OID) -> RS<()> {
-        let storage = {
-            let guard = self.lock_inner()?;
-            guard.storage.clone()
-        };
-        storage.drop_table_async(oid).await
+    async fn drop_table(&self, _tx_mgr: Arc<dyn TxMgr>, oid: OID) -> RS<()> {
+        self.storage.drop_table_async(oid).await
     }
 
-    async fn alter_table(&self, _xid: XID, _oid: OID, _alter_table: &AlterTable) -> RS<()> {
+    async fn alter_table(
+        &self,
+        _tx_mgr: Arc<dyn TxMgr>,
+        _oid: OID,
+        _alter_table: &AlterTable,
+    ) -> RS<()> {
         Err(m_error!(
             EC::NotImplemented,
             "alter table is not implemented"
         ))
     }
 
-    async fn begin_tx(&self) -> RS<XID> {
-        Ok(self.lock_inner()?.begin_tx())
+    async fn begin_tx(&self) -> RS<Arc<dyn TxMgr>> {
+        Ok(self._begin_tx())
     }
 
-    async fn commit_tx(&self, xid: XID) -> RS<()> {
-        let prepared = {
-            let mut guard = self.lock_inner()?;
-
-            guard.commit_tx_prepare(xid)
-        };
-        let result = match prepared {
-            Ok((opt_prepared, tx, storage, log)) => {
-                if let Some(prepared) = opt_prepared {
-                    if let Some(log) = log {
-                        new_xl_batch_writer(log.clone())
-                            .append(prepared.batch())
-                            .await?;
-                        log.flush_async().await?;
-                    }
-                    storage.apply_prepared_commit(prepared)?;
-                    {
-                        let guard = self.inner.lock().unwrap();
-                        guard.tx_lock.release(xid, tx.write_ops());
-                        Ok(())
-                    }
-                } else {
-                    let guard = self.inner.lock().unwrap();
-                    guard.tx_lock.release(xid, tx.write_ops());
-                    Ok(())
-                }
-            }
-            Err(err) => Err(err),
-        };
-        self.lock_inner()?.finish_tx(xid);
-        result
+    async fn commit_tx(&self, tx_mgr: Arc<dyn TxMgr>) -> RS<()> {
+        self.worker_commit_tx_async(tx_mgr).await
     }
 
-    async fn abort_tx(&self, xid: XID) -> RS<()> {
-        self.lock_inner()?.abort_tx(xid)
+    async fn abort_tx(&self, tx_mgr: Arc<dyn TxMgr>) -> RS<()> {
+        self.worker_rollback_tx(tx_mgr)
     }
 
     async fn update(
         &self,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         pred_key: &VecDatum,
         pred_non_key: &Predicate,
         values: &VecDatum,
         opt_update: &OptUpdate,
     ) -> RS<usize> {
-        let meta_mgr = { self.lock_inner()?.meta_mgr.clone() };
-        let desc = meta_mgr.get_table_by_id(table_id).await?;
-        self.lock_inner()?.update(
+        let desc = self.meta_mgr.get_table_by_id(table_id).await?;
+        self._update(
             desc,
-            xid,
+            tx_mgr,
             table_id,
             pred_key,
             pred_non_key,
             values,
             opt_update,
         )
+        .await
     }
 
     async fn read_key(
         &self,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         pred_key: &VecDatum,
         select: &VecSelTerm,
         opt_read: &OptRead,
     ) -> RS<Option<Vec<DatBin>>> {
-        let meta_mgr = { self.lock_inner()?.meta_mgr.clone() };
-        let desc = meta_mgr.get_table_by_id(table_id).await?;
-        self.lock_inner()?
-            .read_key(desc, xid, table_id, pred_key, select, opt_read)
+        let desc = self.meta_mgr.get_table_by_id(table_id).await?;
+        self._read_key(desc, tx_mgr, table_id, pred_key, select, opt_read)
+            .await
     }
 
     async fn read_range(
         &self,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         pred_key: &RangeData,
         pred_non_key: &Predicate,
         select: &VecSelTerm,
         opt_read: &OptRead,
     ) -> RS<Arc<dyn RSCursor>> {
-        let meta_mgr = { self.lock_inner()?.meta_mgr.clone() };
-        let desc = meta_mgr.get_table_by_id(table_id).await?;
-        self.lock_inner()?.read_range(
+        let desc = self.meta_mgr.get_table_by_id(table_id).await?;
+        self._read_range(
             desc,
-            xid,
+            tx_mgr,
             table_id,
             pred_key,
             pred_non_key,
             select,
             opt_read,
         )
+        .await
     }
 
     async fn delete(
         &self,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         pred_key: &VecDatum,
         pred_non_key: &Predicate,
         opt_delete: &OptDelete,
     ) -> RS<usize> {
-        let meta_mgr = { self.lock_inner()?.meta_mgr.clone() };
-        let desc = meta_mgr.get_table_by_id(table_id).await?;
-        self.lock_inner()?
-            .delete(desc, xid, table_id, pred_key, pred_non_key, opt_delete)
+        let desc = self.meta_mgr.get_table_by_id(table_id).await?;
+        self._delete(desc, tx_mgr, table_id, pred_key, pred_non_key, opt_delete)
+            .await
     }
 
     async fn insert(
         &self,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         keys: &VecDatum,
         values: &VecDatum,
         opt_insert: &OptInsert,
     ) -> RS<()> {
-        let meta_mgr = { self.lock_inner()?.meta_mgr.clone() };
-        let desc = meta_mgr.get_table_by_id(table_id).await?;
-        self.lock_inner()?
-            .insert(desc, xid, table_id, keys, values, opt_insert)
+        let desc = self.meta_mgr.get_table_by_id(table_id).await?;
+        self._insert(desc, tx_mgr, table_id, keys, values, opt_insert)
+            .await
+    }
+}
+
+impl IoUringXContract {
+    pub fn meta_mgr(&self) -> Arc<dyn MetaMgr> {
+        self.meta_mgr.clone()
     }
 }
 
@@ -706,7 +656,7 @@ fn build_tuple_for<const IS_KEY: bool>(
     let mut ok = true;
     vec_data.sort_by(|(id1, _), (id2, _)| {
         let (f1, f2) = (desc.get_attr(*id1), desc.get_attr(*id2));
-        if f1.is_primary() != IS_KEY || f2.is_primary() != IS_KEY {
+        if f1.primary_index().is_some() != IS_KEY || f2.primary_index().is_some() != IS_KEY {
             ok = false;
         }
         f1.datum_index().cmp(&f2.datum_index())
@@ -753,12 +703,16 @@ fn project_selected_fields(
     for i in select.vec() {
         let f = desc.get_attr(*i);
         let index = f.datum_index();
-        let field_desc = if f.is_primary() {
+        let field_desc = if f.primary_index().is_some() {
             desc.key_desc().get_field_desc(index)
         } else {
             desc.value_desc().get_field_desc(index)
         };
-        let src = if f.is_primary() { key } else { value };
+        let src = if f.primary_index().is_some() {
+            key
+        } else {
+            value
+        };
         let slice = field_desc.get(src)?;
         tuple_ret.push(slice.to_vec());
     }
@@ -768,10 +722,17 @@ fn project_selected_fields(
 fn apply_value_update(current: &TupleRaw, values: &VecDatum, desc: &TableDesc) -> RS<Vec<u8>> {
     let mut updated = current.clone();
     let mut data = values.data().clone();
-    data.sort_by(|(id1, _), (id2, _)| id1.cmp(id2));
+    data.sort_by_key(|(attr, _)| desc.get_attr(*attr).datum_index());
     for (id, dat) in data.iter() {
+        let field = desc.get_attr(*id);
         let mut delta = vec![];
-        update_tuple(*id as _, dat, desc.value_desc(), current, &mut delta)?;
+        update_tuple(
+            field.datum_index() as usize,
+            dat,
+            desc.value_desc(),
+            current,
+            &mut delta,
+        )?;
         for item in delta {
             item.apply_to(&mut updated);
         }
@@ -877,16 +838,20 @@ mod tests {
     fn test_schema() -> SchemaTable {
         SchemaTable::new(
             "t".to_string(),
-            vec![SchemaColumn::new(
-                "id".to_string(),
-                DatTypeID::I32,
-                DTInfo::from_text(DatTypeID::I32, String::new()),
-            )],
-            vec![SchemaColumn::new(
-                "v".to_string(),
-                DatTypeID::I32,
-                DTInfo::from_text(DatTypeID::I32, String::new()),
-            )],
+            vec![
+                SchemaColumn::new(
+                    "id".to_string(),
+                    DatTypeID::I32,
+                    DTInfo::from_text(DatTypeID::I32, String::new()),
+                ),
+                SchemaColumn::new(
+                    "v".to_string(),
+                    DatTypeID::I32,
+                    DTInfo::from_text(DatTypeID::I32, String::new()),
+                ),
+            ],
+            vec![0],
+            vec![1],
         )
     }
 
@@ -923,10 +888,8 @@ mod tests {
             9,
             vec![],
         ));
-        storage
-            .insert(table_id, b"k1".to_vec(), b"v1".to_vec(), &mut txm)
-            .unwrap();
-        storage.remove(table_id, b"k1", &mut txm).unwrap();
+        block_on(storage.put(table_id, b"k1".to_vec(), b"v1".to_vec(), &mut txm)).unwrap();
+        block_on(storage.remove(table_id, b"k1", &mut txm)).unwrap();
         let prepared = storage.prepare_commit(&txm).unwrap();
 
         assert_eq!(prepared.batch().entries.len(), 1);
@@ -944,17 +907,19 @@ mod tests {
         let table_id = schema.id();
         let contract = IoUringXContract::with_log(meta_mgr, Some(log));
 
-        block_on(contract.create_table(0, &schema)).unwrap();
-        let xid = block_on(contract.begin_tx()).unwrap();
+        let ddl_tx = block_on(contract.begin_tx()).unwrap();
+        block_on(contract.create_table(ddl_tx.clone(), &schema)).unwrap();
+        block_on(contract.commit_tx(ddl_tx)).unwrap();
+        let tx_mgr = block_on(contract.begin_tx()).unwrap();
         block_on(contract.insert(
-            xid,
+            tx_mgr.clone(),
             table_id,
             &key_row(1),
             &value_row(10),
             &OptInsert::default(),
         ))
         .unwrap();
-        block_on(contract.commit_tx(xid)).unwrap();
+        block_on(contract.commit_tx(tx_mgr)).unwrap();
 
         let bytes = std::fs::read(layout.chunk_path(0)).unwrap();
         let frames = decode_frames(&bytes).unwrap();
@@ -986,7 +951,9 @@ mod tests {
         let table_id = schema.id();
         let contract = IoUringXContract::with_log(meta_mgr, None);
 
-        block_on(contract.create_table(0, &schema)).unwrap();
+        let tx_mgr = block_on(contract.begin_tx()).unwrap();
+        block_on(contract.create_table(tx_mgr.clone(), &schema)).unwrap();
+        block_on(contract.commit_tx(tx_mgr)).unwrap();
         let batch = XLBatch {
             entries: vec![crate::wal::xl_entry::XLEntry {
                 xid: 11,
@@ -1059,6 +1026,53 @@ mod tests {
         contract.replay_worker_log_batch(batch).unwrap();
 
         assert_eq!(contract.worker_get(b"wk").unwrap(), None);
+    }
+
+    #[test]
+    fn iouring_xcontract_update_maps_table_attr_to_value_tuple_index() {
+        let meta_mgr = Arc::new(TestMetaMgr::new());
+        let schema = test_schema();
+        let table_id = schema.id();
+        let contract = IoUringXContract::with_log(meta_mgr, None);
+
+        let ddl_tx = block_on(contract.begin_tx()).unwrap();
+        block_on(contract.create_table(ddl_tx.clone(), &schema)).unwrap();
+        block_on(contract.commit_tx(ddl_tx)).unwrap();
+
+        let insert_tx = block_on(contract.begin_tx()).unwrap();
+        block_on(contract.insert(
+            insert_tx.clone(),
+            table_id,
+            &key_row(1),
+            &value_row(10),
+            &OptInsert::default(),
+        ))
+        .unwrap();
+        block_on(contract.commit_tx(insert_tx)).unwrap();
+
+        let update_tx = block_on(contract.begin_tx()).unwrap();
+        let updated = block_on(contract.update(
+            update_tx.clone(),
+            table_id,
+            &key_row(1),
+            &Predicate::CNF(vec![]),
+            &value_row(20),
+            &OptUpdate {},
+        ))
+        .unwrap();
+        assert_eq!(updated, 1);
+        block_on(contract.commit_tx(update_tx)).unwrap();
+
+        let read_tx = block_on(contract.begin_tx()).unwrap();
+        let relation = block_on(contract.read_key(
+            read_tx,
+            table_id,
+            &key_row(1),
+            &VecSelTerm::new(vec![1]),
+            &OptRead::default(),
+        ))
+        .unwrap();
+        assert_eq!(relation, Some(vec![datum(20)]));
     }
 
     fn meta_table(schema: &SchemaTable) -> RS<Arc<TableDesc>> {

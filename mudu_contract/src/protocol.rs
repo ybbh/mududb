@@ -13,14 +13,15 @@ pub enum MessageType {
     Auth = 2,
     Query = 3,
     Execute = 4,
-    Response = 5,
-    Error = 6,
-    Get = 7,
-    Put = 8,
-    RangeScan = 9,
-    ProcedureInvoke = 10,
-    SessionCreate = 11,
-    SessionClose = 12,
+    Batch = 5,
+    Response = 6,
+    Error = 7,
+    Get = 8,
+    Put = 9,
+    RangeScan = 10,
+    ProcedureInvoke = 11,
+    SessionCreate = 12,
+    SessionClose = 13,
 }
 
 impl From<MessageType> for u16 {
@@ -38,14 +39,15 @@ impl TryFrom<u16> for MessageType {
             2 => Ok(MessageType::Auth),
             3 => Ok(MessageType::Query),
             4 => Ok(MessageType::Execute),
-            5 => Ok(MessageType::Response),
-            6 => Ok(MessageType::Error),
-            7 => Ok(MessageType::Get),
-            8 => Ok(MessageType::Put),
-            9 => Ok(MessageType::RangeScan),
-            10 => Ok(MessageType::ProcedureInvoke),
-            11 => Ok(MessageType::SessionCreate),
-            12 => Ok(MessageType::SessionClose),
+            5 => Ok(MessageType::Batch),
+            6 => Ok(MessageType::Response),
+            7 => Ok(MessageType::Error),
+            8 => Ok(MessageType::Get),
+            9 => Ok(MessageType::Put),
+            10 => Ok(MessageType::RangeScan),
+            11 => Ok(MessageType::ProcedureInvoke),
+            12 => Ok(MessageType::SessionCreate),
+            13 => Ok(MessageType::SessionClose),
             _ => Err(m_error!(
                 EC::ParseErr,
                 format!("unknown message type {}", value)
@@ -66,6 +68,7 @@ pub struct FrameHeader {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientRequest {
+    oid: u128,
     app_name: String,
     sql: String,
 }
@@ -287,9 +290,22 @@ impl FrameHeader {
 impl ClientRequest {
     pub fn new(app_name: impl Into<String>, sql: impl Into<String>) -> Self {
         Self {
+            oid: 0,
             app_name: app_name.into(),
             sql: sql.into(),
         }
+    }
+
+    pub fn new_with_oid(oid: u128, app_name: impl Into<String>, sql: impl Into<String>) -> Self {
+        Self {
+            oid,
+            app_name: app_name.into(),
+            sql: sql.into(),
+        }
+    }
+
+    pub fn oid(&self) -> u128 {
+        self.oid
     }
 
     pub fn app_name(&self) -> &str {
@@ -558,6 +574,10 @@ pub fn encode_client_request(request_id: u64, request: &ClientRequest) -> RS<Vec
 
 pub fn decode_client_request(frame: &Frame) -> RS<ClientRequest> {
     decode_payload(frame.payload(), "decode client request error")
+}
+
+pub fn encode_batch_request(request_id: u64, request: &ClientRequest) -> RS<Vec<u8>> {
+    encode_client_request_with_message_type(MessageType::Batch, request_id, request)
 }
 
 pub fn encode_server_response(request_id: u64, response: &ServerResponse) -> RS<Vec<u8>> {

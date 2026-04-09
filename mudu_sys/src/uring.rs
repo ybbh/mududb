@@ -31,7 +31,8 @@ mod linux {
         pub fn new(entries: u32) -> Result<Self, i32> {
             let mut raw = unsafe { std::mem::zeroed() };
             let mut param = unsafe { std::mem::zeroed() };
-            let rc = unsafe { rliburing::io_uring_queue_init_params(entries, &mut raw, &mut param) };
+            let rc =
+                unsafe { rliburing::io_uring_queue_init_params(entries, &mut raw, &mut param) };
             if rc != 0 {
                 return Err(rc);
             }
@@ -65,8 +66,9 @@ mod linux {
                 tv_sec: timeout.as_secs() as i64,
                 tv_nsec: timeout.subsec_nanos() as i64,
             };
-            let rc =
-                unsafe { rliburing::io_uring_wait_cqe_timeout(&mut self.raw, &mut cqe_ptr, &mut ts) };
+            let rc = unsafe {
+                rliburing::io_uring_wait_cqe_timeout(&mut self.raw, &mut cqe_ptr, &mut ts)
+            };
             if rc < 0 {
                 return Err(rc);
             }
@@ -138,25 +140,13 @@ mod linux {
 
         pub fn prep_read_raw(&mut self, fd: RawFd, buf: *mut u8, len: usize, offset: u64) {
             unsafe {
-                rliburing::io_uring_prep_read(
-                    self.raw,
-                    fd,
-                    buf.cast(),
-                    len as _,
-                    offset as _,
-                );
+                rliburing::io_uring_prep_read(self.raw, fd, buf.cast(), len as _, offset as _);
             }
         }
 
         pub fn prep_write_raw(&mut self, fd: RawFd, buf: *const u8, len: usize, offset: u64) {
             unsafe {
-                rliburing::io_uring_prep_write(
-                    self.raw,
-                    fd,
-                    buf.cast(),
-                    len as _,
-                    offset as _,
-                );
+                rliburing::io_uring_prep_write(self.raw, fd, buf.cast(), len as _, offset as _);
             }
         }
 

@@ -53,7 +53,7 @@ impl Planner {
             BoundPredicate::True => {
                 let exec = crate::executor::index_access_range::IndexAccessRange::new(
                     PAccessRange {
-                        xid: self.ctx.xid,
+                        tx_mgr: self.ctx.tx_mgr.clone(),
                         table_id: stmt.table_id,
                         pred_key: RangeData::new(
                             std::ops::Bound::Unbounded,
@@ -72,7 +72,7 @@ impl Planner {
             BoundPredicate::KeyEq { key } => {
                 let exec = crate::executor::index_access_key::IndexAccessKey::new(
                     PAccessKey {
-                        xid: self.ctx.xid,
+                        tx_mgr: self.ctx.tx_mgr.clone(),
                         table_id: stmt.table_id,
                         pred_key: VecDatum::new(key),
                         select,
@@ -87,7 +87,7 @@ impl Planner {
             BoundPredicate::KeyRange { start, end } => {
                 let exec = crate::executor::index_access_range::IndexAccessRange::new(
                     PAccessRange {
-                        xid: self.ctx.xid,
+                        tx_mgr: self.ctx.tx_mgr.clone(),
                         table_id: stmt.table_id,
                         pred_key: RangeData::new(start, end),
                         pred_non_key: Predicate::CNF(Vec::new()),
@@ -106,7 +106,7 @@ impl Planner {
     fn plan_create_table(&self, stmt: BoundCreateTable) -> CreateTable {
         CreateTable::new(
             PCreateTable {
-                xid: self.ctx.xid,
+                tx_mgr: self.ctx.tx_mgr.clone(),
                 schema: stmt.schema,
             },
             self.ctx.x_contract.clone(),
@@ -117,7 +117,7 @@ impl Planner {
     fn plan_drop_table(&self, stmt: BoundDropTable) -> DropTable {
         DropTable::new(
             PDropTable {
-                xid: self.ctx.xid,
+                tx_mgr: self.ctx.tx_mgr.clone(),
                 oid: Some(stmt.table_id),
             },
             self.ctx.x_contract.clone(),
@@ -128,7 +128,7 @@ impl Planner {
     fn plan_insert(&self, stmt: BoundInsert) -> InsertKeyValue {
         InsertKeyValue::new(
             PInsertKeyValue {
-                xid: self.ctx.xid,
+                tx_mgr: self.ctx.tx_mgr.clone(),
                 table_id: stmt.table_id,
                 key: VecDatum::new(stmt.key),
                 value: VecDatum::new(stmt.value),
@@ -141,7 +141,7 @@ impl Planner {
     fn plan_update(&self, stmt: BoundUpdate) -> UpdateKeyValue {
         UpdateKeyValue::new(
             PUpdateKeyValue {
-                xid: self.ctx.xid,
+                tx_mgr: self.ctx.tx_mgr.clone(),
                 table_id: stmt.table_id,
                 key: VecDatum::new(stmt.key),
                 value: VecDatum::new(stmt.value),
@@ -154,7 +154,7 @@ impl Planner {
     fn plan_delete(&self, stmt: BoundDelete) -> DeleteKeyValue {
         DeleteKeyValue::new(
             PDeleteKeyValue {
-                xid: self.ctx.xid,
+                tx_mgr: self.ctx.tx_mgr.clone(),
                 table_id: stmt.table_id,
                 key: VecDatum::new(stmt.key),
             },
@@ -166,7 +166,7 @@ impl Planner {
     fn plan_copy_from(&self, stmt: BoundCopyFrom) -> LoadFromFile {
         LoadFromFile::new(
             stmt.file_path,
-            self.ctx.xid,
+            self.ctx.tx_mgr.clone(),
             stmt.table_id,
             stmt.key_index,
             stmt.value_index,
@@ -178,7 +178,7 @@ impl Planner {
     fn plan_copy_to(&self, stmt: BoundCopyTo) -> SaveToFile {
         SaveToFile::new(
             stmt.file_path,
-            self.ctx.xid,
+            self.ctx.tx_mgr.clone(),
             stmt.table_id,
             stmt.key_indexing,
             stmt.value_indexing,

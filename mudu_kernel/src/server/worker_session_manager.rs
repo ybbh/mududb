@@ -1,4 +1,6 @@
-use crate::server::worker_tx_manager::WorkerTxManager;
+use crate::contract::meta_mgr::MetaMgr;
+use crate::mudu_conn::mudu_conn_core::MuduConnCore;
+use crate::x_engine::tx_mgr::TxMgr;
 use mudu::common::id::OID;
 use mudu::common::result::RS;
 use mudu::common::xid::new_xid;
@@ -14,23 +16,25 @@ pub(crate) struct WorkerSessionManager {
     connection_sessions: SccHashMap<u64, Arc<SccHashMap<OID, ()>>>,
     session_contexts: SccHashMap<OID, Arc<SessionContext>>,
     active_sessions: Arc<AtomicUsize>,
+    meta_mgr: Arc<dyn MetaMgr>,
 }
 
-#[derive(Default)]
 pub(crate) struct SessionContext {
-    tx_manager: UnsafeCell<Option<WorkerTxManager>>,
+    tx_manager: UnsafeCell<Option<Arc<dyn TxMgr>>>,
+    mudu_conn_core: Arc<MuduConnCore>,
 }
 
 unsafe impl Send for SessionContext {}
 unsafe impl Sync for SessionContext {}
 
 impl WorkerSessionManager {
-    pub(crate) fn new(active_sessions: Arc<AtomicUsize>) -> Self {
+    pub(crate) fn new(active_sessions: Arc<AtomicUsize>, meta_mgr: Arc<dyn MetaMgr>) -> Self {
         Self {
             session_owner: SccHashMap::new(),
             connection_sessions: SccHashMap::new(),
             session_contexts: SccHashMap::new(),
             active_sessions,
+            meta_mgr,
         }
     }
 
@@ -40,7 +44,7 @@ impl WorkerSessionManager {
             if self.session_owner.insert_sync(session_id, conn_id).is_err() {
                 continue;
             }
-            let session_context = Arc::new(SessionContext::default());
+            let session_context = Arc::new(SessionContext::new(self.meta_mgr.clone()));
             if self
                 .session_contexts
                 .insert_sync(session_id, session_context)
@@ -182,7 +186,10 @@ impl WorkerSessionManager {
                 })?;
             if self
                 .session_contexts
-                .insert_sync(session_id, Arc::new(SessionContext::default()))
+                .insert_sync(
+                    session_id,
+                    Arc::new(SessionContext::new(self.meta_mgr.clone())),
+                )
                 .is_err()
             {
                 let _ = self.session_owner.remove_sync(&session_id);
@@ -203,12 +210,45 @@ impl WorkerSessionManager {
     pub(crate) fn connection_has_active_tx(&self, conn_id: u64) -> RS<bool> {
         let session_ids = self.connection_session_ids(conn_id);
         for session_id in session_ids {
-            let session = self.session_context(session_id)?;
-            if session.tx_manager_ref().is_some() {
+            if self.has_session_tx(session_id)? {
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    pub(crate) fn has_session_tx(&self, session_id: OID) -> RS<bool> {
+        Ok(self.session_context(session_id)?.tx_manager_ref().is_some())
+    }
+
+    pub(crate) fn begin_session_tx(&self, session_id: OID, tx_mgr: Arc<dyn TxMgr>) -> RS<()> {
+        let session = self.session_context(session_id)?;
+        if session.tx_manager_ref().is_some() {
+            return Err(m_error!(
+                EC::ExistingSuchElement,
+                format!("session {} already has an active transaction", session_id)
+            ));
+        }
+        session.set_tx_manager(Some(tx_mgr));
+        Ok(())
+    }
+
+    pub(crate) fn take_session_tx(&self, session_id: OID) -> RS<Arc<dyn TxMgr>> {
+        let session = self.session_context(session_id)?;
+        session.take_tx_manager().ok_or_else(|| {
+            m_error!(
+                EC::NoSuchElement,
+                format!("session {} has no active transaction", session_id)
+            )
+        })
+    }
+
+    pub(crate) fn with_session_tx<R, F>(&self, session_id: OID, f: F) -> RS<R>
+    where
+        F: FnOnce(Option<Arc<dyn TxMgr>>) -> RS<R>,
+    {
+        let session = self.session_context(session_id)?;
+        f(session.tx_manager_ref().clone())
     }
 
     pub(crate) fn detach_connection_sessions(&self, conn_id: u64) -> RS<Vec<OID>> {
@@ -263,21 +303,28 @@ impl WorkerSessionManager {
 }
 
 impl SessionContext {
-    pub(crate) fn tx_manager_ref(&self) -> &Option<WorkerTxManager> {
+    fn new(meta_mgr: Arc<dyn MetaMgr>) -> Self {
+        Self {
+            tx_manager: UnsafeCell::new(None),
+            mudu_conn_core: Arc::new(MuduConnCore::new(meta_mgr)),
+        }
+    }
+
+    pub(crate) fn tx_manager_ref(&self) -> &Option<Arc<dyn TxMgr>> {
         unsafe { &*self.tx_manager.get() }
     }
 
-    pub(crate) fn tx_manager_mut(&self) -> &mut Option<WorkerTxManager> {
-        unsafe { &mut *self.tx_manager.get() }
-    }
-
-    pub(crate) fn set_tx_manager(&self, tx_manager: Option<WorkerTxManager>) {
+    pub(crate) fn set_tx_manager(&self, tx_manager: Option<Arc<dyn TxMgr>>) {
         unsafe {
             *self.tx_manager.get() = tx_manager;
         }
     }
 
-    pub(crate) fn take_tx_manager(&self) -> Option<WorkerTxManager> {
-        self.tx_manager_mut().take()
+    pub(crate) fn take_tx_manager(&self) -> Option<Arc<dyn TxMgr>> {
+        unsafe { (&mut *self.tx_manager.get()).take() }
+    }
+
+    pub(crate) fn mudu_conn_core(&self) -> Arc<MuduConnCore> {
+        self.mudu_conn_core.clone()
     }
 }

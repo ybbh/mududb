@@ -38,6 +38,16 @@ impl ResultSet for ResultSetPG {
                             let val: i64 = row.get(i);
                             DatValue::from_i64(val)
                         }
+                        DatTypeID::U128 => {
+                            let val: String = row.get(i);
+                            let val = val.parse::<u128>().expect("postgres oid parse error");
+                            DatValue::from_u128(val)
+                        }
+                        DatTypeID::I128 => {
+                            let val: String = row.get(i);
+                            let val = val.parse::<i128>().expect("postgres i128 parse error");
+                            DatValue::from_i128(val)
+                        }
                         DatTypeID::F32 => {
                             let val: f32 = row.get(i);
                             DatValue::from_f32(val)

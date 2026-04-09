@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, Bound};
 use std::ops::Bound::{Excluded, Included, Unbounded};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
+use futures::executor::block_on;
 use mudu::common::id::OID;
 use mudu::common::result::RS;
 use mudu::error::ec::EC;
@@ -21,6 +22,15 @@ use crate::storage::relation::relation::Relation;
 use crate::wal::xl_batch::XLBatch;
 use crate::wal::xl_data_op::{XLDelete, XLInsert};
 use crate::wal::xl_entry::TxOp;
+use crate::x_engine::tx_mgr::TxMgr;
+
+type WorkerStorageRegistry = std::collections::HashMap<String, Vec<Weak<WorkerStorage>>>;
+
+fn storage_registry() -> &'static Mutex<WorkerStorageRegistry> {
+    static REGISTRY: OnceLock<Mutex<WorkerStorageRegistry>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct PreparedWorkerCommit {
     xid: u64,
@@ -48,72 +58,92 @@ impl WorkerStorage {
         }
     }
 
-    pub async fn create_table_async(&self, schema: &SchemaTable) -> RS<()> {
-        let oid = schema.id();
-        self.mgr.create_table(schema).await?;
-        let table_desc = self.mgr.get_table_by_id(oid).await?;
-        self.create_relation_index(oid, table_desc.as_ref())?;
+    pub fn register_global(self: &Arc<Self>) {
+        let mut guard = storage_registry().lock().unwrap();
+        guard
+            .entry(self.relation_path.clone())
+            .or_default()
+            .push(Arc::downgrade(self));
+    }
+
+    pub fn bootstrap_existing_tables_sync(&self) -> RS<()> {
+        for schema in block_on(self.mgr.list_schemas())? {
+            self.apply_create_table_local(&schema)?;
+        }
         Ok(())
+    }
+
+    pub async fn create_table_async(&self, schema: &SchemaTable) -> RS<()> {
+        self.mgr.create_table(schema).await?;
+        self.broadcast_create_table(schema)
     }
 
     pub async fn drop_table_async(&self, oid: OID) -> RS<()> {
         self.mgr.drop_table(oid).await?;
-        let _ = self.relation_store.remove_sync(&oid);
-        Ok(())
+        self.broadcast_drop_table(oid)
     }
 
+
     #[allow(dead_code)]
-    pub fn contains_key(&self, oid: OID, key: &KeyTuple, txm: &mut WorkerTxManager) -> RS<bool> {
+    pub async fn contains_key(&self, oid: OID, key: &KeyTuple, txm: &dyn TxMgr) -> RS<bool> {
         if let Some(staged) = txm.get_relation(oid, key.as_slice()) {
             return Ok(staged.is_some());
         }
-        self.read_visible_relation_exists(oid, key, txm.snapshot())
+        self.read_visible_relation_exists(oid, key, &txm.snapshot()).await
     }
 
-    pub fn get(&self, oid: OID, key: &[u8], txm: &mut WorkerTxManager) -> RS<Option<Vec<u8>>> {
+
+    pub async fn get(&self, oid: OID, key: &[u8], txm: &dyn TxMgr) -> RS<Option<Vec<u8>>> {
         if let Some(staged) = txm.get_relation(oid, key) {
             return Ok(staged);
         }
-
         let key = KeyTuple::from(key.to_vec());
-        self.read_visible_relation_value(oid, &key, txm.snapshot())
+        self.read_visible_relation_value(oid, &key, &txm.snapshot()).await
     }
 
-    pub fn insert(
+    pub async fn put(
         &self,
         oid: OID,
         key: Vec<u8>,
         value: Vec<u8>,
-        txm: &mut WorkerTxManager,
+        txm: &dyn TxMgr,
     ) -> RS<()> {
         let key_tuple = KeyTuple::from(key.clone());
-        self.ensure_no_relation_write_conflict(oid, &key_tuple, txm.snapshot())?;
+
+        self.ensure_no_relation_write_conflict(oid, &key_tuple, &txm.snapshot())
+            .await?;
         txm.put_relation(oid, key, value);
         Ok(())
     }
 
-    pub fn remove(&self, oid: OID, key: &[u8], txm: &mut WorkerTxManager) -> RS<Option<Vec<u8>>> {
-        let key_tuple = KeyTuple::from(key.to_vec());
-        self.ensure_no_relation_write_conflict(oid, &key_tuple, txm.snapshot())?;
 
+    pub async fn remove(&self, oid: OID, key: &[u8], txm: &dyn TxMgr) -> RS<Option<Vec<u8>>> {
+        let key_tuple = KeyTuple::from(key.to_vec());
+        self.ensure_no_relation_write_conflict(oid, &key_tuple, &txm.snapshot())
+            .await?;
         let current = match txm.get_relation(oid, key) {
             Some(staged) => staged,
-            None => self.read_visible_relation_value(oid, &key_tuple, txm.snapshot())?,
+            None => self
+                .read_visible_relation_value(oid, &key_tuple, &txm.snapshot())
+                .await?,
         };
-
         if current.is_some() {
             txm.delete_relation(oid, key.to_vec());
         }
         Ok(current)
+
     }
 
-    pub fn range(
+
+    pub async fn range(
         &self,
         oid: OID,
         bounds: (Bound<&[u8]>, Bound<&[u8]>),
-        txm: &mut WorkerTxManager,
+        txm: &dyn TxMgr,
     ) -> RS<Vec<(Vec<u8>, Vec<u8>)>> {
-        let base_items = self.range_visible_relation(oid, bounds, txm.snapshot())?;
+        let base_items = self
+            .range_visible_relation(oid, bounds, &txm.snapshot())
+            .await?;
         let (start_key, end_key) = bounds_to_scan(&bounds);
         let staged_items = txm.staged_relation_items_in_range(oid, &start_key, &end_key);
 
@@ -131,67 +161,95 @@ impl WorkerStorage {
             .collect())
     }
 
-    pub fn worker_get(&self, key: &[u8], snapshot: Option<&WorkerSnapshot>) -> RS<Option<Vec<u8>>> {
-        let row = self.kv_store.get_sync(key);
+    pub async fn kv_get(
+        &self,
+        key: &[u8],
+        snapshot: Option<&WorkerSnapshot>,
+    ) -> RS<Option<Vec<u8>>> {
+        let row = self.kv_store.get_sync(key).map(|entry| entry.get().clone());
         let version = match snapshot {
-            Some(snapshot) => row.and_then(|row| {
-                let snapshot = snapshot.to_snapshot();
-                read_visible_version(row.get(), &snapshot)
-            }),
-            None => row.and_then(|row| latest_version(row.get())),
+            Some(snapshot) => match row {
+                Some(row) => {
+                    let snapshot = snapshot.to_snapshot();
+                    row.read(&snapshot).await?
+                }
+                None => None,
+            },
+            None => match row {
+                Some(row) => row.read_latest().await?,
+                None => None,
+            },
         };
         Ok(version
             .filter(|version| !version.is_deleted())
             .map(|version| version.tuple().clone()))
     }
 
-    pub fn worker_range(
+
+    pub async fn kv_range(
         &self,
         start_key: &[u8],
         end_key: &[u8],
         snapshot: Option<&WorkerSnapshot>,
     ) -> RS<Vec<KvItem>> {
-        let mut items = Vec::new();
+        let mut rows = Vec::new();
         self.kv_store.iter_sync(|key, row| {
             let in_range = if end_key.is_empty() {
                 key.as_slice() >= start_key
             } else {
                 key.as_slice() >= start_key && key.as_slice() < end_key
             };
-            if !in_range {
-                return true;
-            }
-
-            let visible = match snapshot {
-                Some(snapshot) => {
-                    let snapshot = snapshot.to_snapshot();
-                    read_visible_version(row, &snapshot)
-                }
-                None => latest_version(row),
-            };
-            if let Some(visible) = visible.filter(|version| !version.is_deleted()) {
-                items.push(KvItem {
-                    key: key.clone(),
-                    value: visible.tuple().clone(),
-                });
+            if in_range {
+                rows.push((key.clone(), row.clone()));
             }
             true
         });
+
+        let mut items = Vec::new();
+        for (key, row) in rows {
+            let visible = match snapshot {
+                Some(snapshot) => {
+                    let snapshot = snapshot.to_snapshot();
+                    row.read(&snapshot).await?
+                }
+                None => row.read_latest().await?,
+            };
+            if let Some(visible) = visible.filter(|version| !version.is_deleted()) {
+                items.push(KvItem {
+                    key,
+                    value: visible.tuple().clone(),
+                });
+            }
+        }
         items.sort_by(|left, right| left.key.cmp(&right.key));
         Ok(items)
     }
 
+
     #[allow(dead_code)]
-    pub(crate) fn commit_tx(&self, txm: &mut WorkerTxManager) -> RS<()> {
-        let prepared = self.prepare_commit(txm)?;
-        self.apply_prepared_commit(prepared)
+    pub(crate) async fn commit_tx(&self, txm: &mut WorkerTxManager) -> RS<()> {
+        let prepared = self.prepare_commit_async(txm).await?;
+        self.apply_relation_rows_async(&prepared).await?;
+        self.apply_kv_rows_async(&prepared).await?;
+        Ok(())
     }
 
-    pub(crate) fn prepare_commit(&self, txm: &WorkerTxManager) -> RS<PreparedWorkerCommit> {
-        self.prepare_commit_parts(
-            txm.snapshot(),
+    pub(crate) async fn prepare_commit_async(&self, txm: &dyn TxMgr) -> RS<PreparedWorkerCommit> {
+        self.prepare_commit_parts_async(
+            &txm.snapshot(),
             txm.xid(),
-            txm.staged_relation_ops().clone(),
+            txm.staged_relation_ops(),
+            txm.staged_put_items().into_iter().collect(),
+            txm.xl_batch(),
+        )
+        .await
+    }
+
+    pub(crate) fn prepare_commit(&self, txm: &dyn TxMgr) -> RS<PreparedWorkerCommit> {
+        self.prepare_commit_parts(
+            &txm.snapshot(),
+            txm.xid(),
+            txm.staged_relation_ops(),
             txm.staged_put_items().into_iter().collect(),
             txm.xl_batch(),
         )
@@ -225,6 +283,12 @@ impl WorkerStorage {
     pub(crate) fn apply_prepared_commit(&self, prepared: PreparedWorkerCommit) -> RS<()> {
         self.apply_relation_rows(&prepared)?;
         self.apply_kv_rows(&prepared)?;
+        Ok(())
+    }
+
+    pub(crate) async fn apply_prepared_commit_async(&self, prepared: PreparedWorkerCommit) -> RS<()> {
+        self.apply_relation_rows_async(&prepared).await?;
+        self.apply_kv_rows_async(&prepared).await?;
         Ok(())
     }
 
@@ -278,6 +342,26 @@ impl WorkerStorage {
         })
     }
 
+    async fn prepare_commit_parts_async(
+        &self,
+        snapshot: &WorkerSnapshot,
+        xid: u64,
+        relation_rows: BTreeMap<OID, BTreeMap<Vec<u8>, Option<Vec<u8>>>>,
+        kv_rows: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+        batch: XLBatch,
+    ) -> RS<PreparedWorkerCommit> {
+        self.ensure_no_relation_conflicts_async(snapshot, xid, &relation_rows)
+            .await?;
+        self.ensure_no_kv_conflicts(snapshot, xid, &kv_rows)?;
+
+        Ok(PreparedWorkerCommit {
+            xid,
+            relation_rows,
+            kv_rows,
+            batch,
+        })
+    }
+
     fn ensure_no_relation_conflicts(
         &self,
         snapshot: &WorkerSnapshot,
@@ -291,7 +375,34 @@ impl WorkerStorage {
                 .ok_or_else(|| m_error!(EC::NoSuchElement, format!("no such table {}", oid)))?;
             for key in rows.keys() {
                 let key_tuple = KeyTuple::from(key.clone());
-                if relation.get().has_write_conflict(&key_tuple, snapshot)? {
+                if relation.get().has_write_conflict_sync(&key_tuple, snapshot)? {
+                    return Err(m_error!(
+                        EC::TxErr,
+                        format!(
+                            "write-write conflict on table {} key {:?} for transaction {}",
+                            oid, key, xid
+                        )
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn ensure_no_relation_conflicts_async(
+        &self,
+        snapshot: &WorkerSnapshot,
+        xid: u64,
+        relation_rows: &BTreeMap<OID, BTreeMap<Vec<u8>, Option<Vec<u8>>>>,
+    ) -> RS<()> {
+        for (oid, rows) in relation_rows {
+            let relation = self
+                .relation_store
+                .get_sync(oid)
+                .ok_or_else(|| m_error!(EC::NoSuchElement, format!("no such table {}", oid)))?;
+            for key in rows.keys() {
+                let key_tuple = KeyTuple::from(key.clone());
+                if relation.get().has_write_conflict(&key_tuple, snapshot).await? {
                     return Err(m_error!(
                         EC::TxErr,
                         format!(
@@ -341,7 +452,23 @@ impl WorkerStorage {
             for (key, value) in rows {
                 relation
                     .get()
-                    .write_row(key.clone(), value.clone(), prepared.xid)?;
+                    .write_row_sync(key.clone(), value.clone(), prepared.xid)?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn apply_relation_rows_async(&self, prepared: &PreparedWorkerCommit) -> RS<()> {
+        for (oid, rows) in &prepared.relation_rows {
+            let relation = self
+                .relation_store
+                .get_sync(oid)
+                .ok_or_else(|| m_error!(EC::NoSuchElement, format!("no such table {}", oid)))?;
+            for (key, value) in rows {
+                relation
+                    .get()
+                    .write_row(key.clone(), value.clone(), prepared.xid)
+                    .await?;
             }
         }
         Ok(())
@@ -350,6 +477,19 @@ impl WorkerStorage {
     fn apply_kv_rows(&self, prepared: &PreparedWorkerCommit) -> RS<()> {
         for (key, value) in &prepared.kv_rows {
             write_version_to_kv_store(&self.kv_store, key.clone(), value.clone(), prepared.xid)?;
+        }
+        Ok(())
+    }
+
+    async fn apply_kv_rows_async(&self, prepared: &PreparedWorkerCommit) -> RS<()> {
+        for (key, value) in &prepared.kv_rows {
+            write_version_to_kv_store_async(
+                &self.kv_store,
+                key.clone(),
+                value.clone(),
+                prepared.xid,
+            )
+            .await?;
         }
         Ok(())
     }
@@ -364,7 +504,7 @@ impl WorkerStorage {
                     format!("no such table {}", insert.table_id)
                 )
             })?;
-        relation.get().write_value(insert.key, insert.value, xid)
+        relation.get().write_value_sync(insert.key, insert.value, xid)
     }
 
     fn apply_relation_replay_delete(&self, delete: XLDelete, xid: u64) -> RS<()> {
@@ -377,10 +517,11 @@ impl WorkerStorage {
                     format!("no such table {}", delete.table_id)
                 )
             })?;
-        relation.get().write_delete(delete.key, xid)
+        relation.get().write_delete_sync(delete.key, xid)
     }
 
-    fn read_visible_relation_exists(
+    #[allow(dead_code)]
+    async fn read_visible_relation_exists(
         &self,
         oid: OID,
         key: &KeyTuple,
@@ -390,10 +531,10 @@ impl WorkerStorage {
             .relation_store
             .get_sync(&oid)
             .ok_or_else(|| m_error!(EC::NoSuchElement, format!("no such table {}", oid)))?;
-        relation.get().has_visible_version(key, snapshot)
+        relation.get().has_visible_version(key, snapshot).await
     }
 
-    fn read_visible_relation_value(
+    async fn read_visible_relation_value(
         &self,
         oid: OID,
         key: &KeyTuple,
@@ -403,10 +544,10 @@ impl WorkerStorage {
             .relation_store
             .get_sync(&oid)
             .ok_or_else(|| m_error!(EC::NoSuchElement, format!("no such table {}", oid)))?;
-        relation.get().visible_value(key, snapshot)
+        relation.get().visible_value(key, snapshot).await
     }
 
-    fn range_visible_relation(
+    async fn range_visible_relation(
         &self,
         oid: OID,
         bounds: (Bound<&[u8]>, Bound<&[u8]>),
@@ -416,10 +557,10 @@ impl WorkerStorage {
             .relation_store
             .get_sync(&oid)
             .ok_or_else(|| m_error!(EC::NoSuchElement, format!("no such table {}", oid)))?;
-        relation.get().visible_range(bounds, snapshot)
+        relation.get().visible_range(bounds, snapshot).await
     }
 
-    fn ensure_no_relation_write_conflict(
+    async fn ensure_no_relation_write_conflict(
         &self,
         oid: OID,
         key: &KeyTuple,
@@ -429,7 +570,7 @@ impl WorkerStorage {
             .relation_store
             .get_sync(&oid)
             .ok_or_else(|| m_error!(EC::NoSuchElement, format!("no such table {}", oid)))?;
-        if relation.get().has_write_conflict(key, snapshot)? {
+        if relation.get().has_write_conflict(key, snapshot).await? {
             return Err(m_error!(
                 EC::TxErr,
                 format!(
@@ -454,6 +595,53 @@ impl WorkerStorage {
             ),
         );
         Ok(())
+    }
+
+    fn apply_create_table_local(&self, schema: &SchemaTable) -> RS<()> {
+        let table_desc =
+            crate::contract::table_info::TableInfo::new(schema.clone())?.table_desc()?;
+        self.create_relation_index(schema.id(), table_desc.as_ref())
+    }
+
+    fn apply_drop_table_local(&self, oid: OID) {
+        let _ = self.relation_store.remove_sync(&oid);
+    }
+
+    fn broadcast_create_table(&self, schema: &SchemaTable) -> RS<()> {
+        let peers = self.peer_instances();
+        if peers.is_empty() {
+            return self.apply_create_table_local(schema);
+        }
+        for storage in peers {
+            storage.apply_create_table_local(schema)?;
+        }
+        Ok(())
+    }
+
+    fn broadcast_drop_table(&self, oid: OID) -> RS<()> {
+        let peers = self.peer_instances();
+        if peers.is_empty() {
+            self.apply_drop_table_local(oid);
+            return Ok(());
+        }
+        for storage in peers {
+            storage.apply_drop_table_local(oid);
+        }
+        Ok(())
+    }
+
+    fn peer_instances(&self) -> Vec<Arc<WorkerStorage>> {
+        let mut guard = storage_registry().lock().unwrap();
+        let peers = guard.entry(self.relation_path.clone()).or_default();
+        let mut live = Vec::with_capacity(peers.len());
+        peers.retain(|weak| match weak.upgrade() {
+            Some(storage) => {
+                live.push(storage);
+                true
+            }
+            None => false,
+        });
+        live
     }
 }
 
@@ -486,15 +674,27 @@ fn write_version_to_kv_store(
     Ok(())
 }
 
-fn latest_version(row: &DataRow) -> Option<VersionTuple> {
-    row.read_latest_sync().ok().flatten()
+async fn write_version_to_kv_store_async(
+    kv_store: &SccHashMap<Vec<u8>, DataRow>,
+    key: Vec<u8>,
+    value: Option<Vec<u8>>,
+    xid: u64,
+) -> RS<()> {
+    let row = kv_store
+        .get_sync(&key)
+        .map(|entry| entry.get().clone())
+        .unwrap_or_else(|| DataRow::new(0));
+    let version = match value {
+        Some(value) => new_value_version(xid, value),
+        None => VersionTuple::new_delete(Timestamp::new(xid, u64::MAX)),
+    };
+    row.write(version, None).await?;
+    let _ = kv_store.insert_sync(key, row);
+    Ok(())
 }
 
-fn read_visible_version(
-    row: &DataRow,
-    snapshot: &crate::contract::snapshot::Snapshot,
-) -> Option<VersionTuple> {
-    row.read_sync(snapshot).ok().flatten()
+fn latest_version(row: &DataRow) -> Option<VersionTuple> {
+    row.read_latest_sync().ok().flatten()
 }
 
 fn bounds_to_scan(bounds: &(Bound<&[u8]>, Bound<&[u8]>)) -> (Vec<u8>, Vec<u8>) {
@@ -573,16 +773,20 @@ mod tests {
     fn test_schema() -> SchemaTable {
         SchemaTable::new(
             "t".to_string(),
-            vec![SchemaColumn::new(
-                "id".to_string(),
-                DatTypeID::I32,
-                DTInfo::from_text(DatTypeID::I32, String::new()),
-            )],
-            vec![SchemaColumn::new(
-                "v".to_string(),
-                DatTypeID::I32,
-                DTInfo::from_text(DatTypeID::I32, String::new()),
-            )],
+            vec![
+                SchemaColumn::new(
+                    "id".to_string(),
+                    DatTypeID::I32,
+                    DTInfo::from_text(DatTypeID::I32, String::new()),
+                ),
+                SchemaColumn::new(
+                    "v".to_string(),
+                    DatTypeID::I32,
+                    DTInfo::from_text(DatTypeID::I32, String::new()),
+                ),
+            ],
+            vec![0],
+            vec![1],
         )
     }
 
@@ -605,6 +809,33 @@ mod tests {
         (storage, oid)
     }
 
+    fn test_shared_storage() -> (
+        Arc<TestMetaMgr>,
+        Arc<WorkerStorage>,
+        Arc<WorkerStorage>,
+        OID,
+    ) {
+        let mgr = Arc::new(TestMetaMgr::new());
+        let root = std::env::temp_dir()
+            .join(format!(
+                "worker_storage_shared_test_{}",
+                mudu::common::id::gen_oid()
+            ))
+            .to_string_lossy()
+            .to_string();
+        let storage1 = Arc::new(WorkerStorage::new(mgr.clone(), 1, root.clone()));
+        storage1.register_global();
+        storage1.bootstrap_existing_tables_sync().unwrap();
+        let storage2 = Arc::new(WorkerStorage::new(mgr.clone(), 2, root));
+        storage2.register_global();
+        storage2.bootstrap_existing_tables_sync().unwrap();
+
+        let schema = test_schema();
+        let oid = schema.id();
+        futures::executor::block_on(storage1.create_table_async(&schema)).unwrap();
+        (mgr, storage1, storage2, oid)
+    }
+
     fn begin_tx(xid: u64, running: Vec<u64>) -> WorkerTxManager {
         WorkerTxManager::new(WorkerSnapshot::new(xid, running))
     }
@@ -614,41 +845,52 @@ mod tests {
     }
 
     #[test]
+    fn worker_storage_broadcasts_create_and_drop_to_peer_workers() {
+        let (mgr, _storage1, storage2, oid) = test_shared_storage();
+        let mut tx = begin_tx(1, vec![]);
+        block_on(storage2.put(oid, i32_bytes(7), i32_bytes(70), &mut tx)).unwrap();
+        block_on(storage2.commit_tx(&mut tx)).unwrap();
+        assert!(futures::executor::block_on(mgr.get_table_by_id(oid)).is_ok());
+
+        futures::executor::block_on(storage2.drop_table_async(oid)).unwrap();
+        assert!(futures::executor::block_on(mgr.get_table_by_id(oid)).is_err());
+
+        let mut tx = begin_tx(2, vec![]);
+        let err = block_on(storage2.put(oid, i32_bytes(8), i32_bytes(80), &mut tx))
+            .unwrap_err();
+        assert!(format!("{err}").contains("no such table"));
+    }
+
+    #[test]
     fn worker_storage_reads_own_writes() {
         let (storage, oid) = test_storage();
         let mut tx = begin_tx(10, vec![]);
 
-        storage
-            .insert(oid, i32_bytes(1), i32_bytes(11), &mut tx)
-            .unwrap();
+        block_on(storage.put(oid, i32_bytes(1), i32_bytes(11), &mut tx)).unwrap();
 
         assert_eq!(
-            storage.get(oid, &i32_bytes(1), &mut tx).unwrap(),
+            block_on(storage.get(oid, &i32_bytes(1), &mut tx)).unwrap(),
             Some(i32_bytes(11))
         );
-        assert!(storage
-            .contains_key(oid, &KeyTuple::from(i32_bytes(1)), &mut tx)
-            .unwrap());
+        assert!(
+            block_on(storage.contains_key(oid, &KeyTuple::from(i32_bytes(1)), &mut tx)).unwrap()
+        );
     }
 
     #[test]
     fn worker_storage_snapshot_hides_later_commit() {
         let (storage, oid) = test_storage();
         let mut tx1 = begin_tx(1, vec![]);
-        storage
-            .insert(oid, i32_bytes(1), i32_bytes(10), &mut tx1)
-            .unwrap();
-        storage.commit_tx(&mut tx1).unwrap();
+        block_on(storage.put(oid, i32_bytes(1), i32_bytes(10), &mut tx1)).unwrap();
+        block_on(storage.commit_tx(&mut tx1)).unwrap();
 
         let mut old_tx = begin_tx(2, vec![]);
         let mut new_tx = begin_tx(3, vec![2]);
-        storage
-            .insert(oid, i32_bytes(1), i32_bytes(20), &mut new_tx)
-            .unwrap();
-        storage.commit_tx(&mut new_tx).unwrap();
+        block_on(storage.put(oid, i32_bytes(1), i32_bytes(20), &mut new_tx)).unwrap();
+        block_on(storage.commit_tx(&mut new_tx)).unwrap();
 
         assert_eq!(
-            storage.get(oid, &i32_bytes(1), &mut old_tx).unwrap(),
+            block_on(storage.get(oid, &i32_bytes(1), &mut old_tx)).unwrap(),
             Some(i32_bytes(10))
         );
     }
@@ -657,19 +899,15 @@ mod tests {
     fn worker_storage_range_is_stable_with_snapshot() {
         let (storage, oid) = test_storage();
         let mut seed = begin_tx(1, vec![]);
-        storage
-            .insert(oid, i32_bytes(1), i32_bytes(10), &mut seed)
-            .unwrap();
-        storage.commit_tx(&mut seed).unwrap();
+        block_on(storage.put(oid, i32_bytes(1), i32_bytes(10), &mut seed)).unwrap();
+        block_on(storage.commit_tx(&mut seed)).unwrap();
 
         let mut old_tx = begin_tx(2, vec![]);
         let mut new_tx = begin_tx(3, vec![2]);
-        storage
-            .insert(oid, i32_bytes(2), i32_bytes(20), &mut new_tx)
-            .unwrap();
-        storage.commit_tx(&mut new_tx).unwrap();
+        block_on(storage.put(oid, i32_bytes(2), i32_bytes(20), &mut new_tx)).unwrap();
+        block_on(storage.commit_tx(&mut new_tx)).unwrap();
 
-        let rows = storage
+        let rows = block_on(storage
             .range(
                 oid,
                 (
@@ -678,7 +916,8 @@ mod tests {
                 ),
                 &mut old_tx,
             )
-            .unwrap();
+        )
+        .unwrap();
         assert_eq!(rows, vec![(i32_bytes(1), i32_bytes(10))]);
     }
 
@@ -686,21 +925,15 @@ mod tests {
     fn worker_storage_first_committer_wins() {
         let (storage, oid) = test_storage();
         let mut seed = begin_tx(1, vec![]);
-        storage
-            .insert(oid, i32_bytes(1), i32_bytes(10), &mut seed)
-            .unwrap();
-        storage.commit_tx(&mut seed).unwrap();
+        block_on(storage.put(oid, i32_bytes(1), i32_bytes(10), &mut seed)).unwrap();
+        block_on(storage.commit_tx(&mut seed)).unwrap();
 
         let mut tx1 = begin_tx(2, vec![]);
         let mut tx2 = begin_tx(3, vec![2]);
-        storage
-            .insert(oid, i32_bytes(1), i32_bytes(11), &mut tx1)
-            .unwrap();
-        storage
-            .insert(oid, i32_bytes(1), i32_bytes(12), &mut tx2)
-            .unwrap();
-        storage.commit_tx(&mut tx1).unwrap();
-        let err = storage.commit_tx(&mut tx2).unwrap_err();
+        block_on(storage.put(oid, i32_bytes(1), i32_bytes(11), &mut tx1)).unwrap();
+        block_on(storage.put(oid, i32_bytes(1), i32_bytes(12), &mut tx2)).unwrap();
+        block_on(storage.commit_tx(&mut tx1)).unwrap();
+        let err = block_on(storage.commit_tx(&mut tx2)).unwrap_err();
 
         assert!(err.to_string().contains("write-write conflict"));
     }
@@ -709,26 +942,24 @@ mod tests {
     fn worker_storage_delete_respects_snapshot() {
         let (storage, oid) = test_storage();
         let mut seed = begin_tx(1, vec![]);
-        storage
-            .insert(oid, i32_bytes(1), i32_bytes(10), &mut seed)
-            .unwrap();
-        storage.commit_tx(&mut seed).unwrap();
+        block_on(storage.put(oid, i32_bytes(1), i32_bytes(10), &mut seed)).unwrap();
+        block_on(storage.commit_tx(&mut seed)).unwrap();
 
         let mut old_tx = begin_tx(2, vec![]);
         let mut delete_tx = begin_tx(3, vec![2]);
         assert_eq!(
-            storage.remove(oid, &i32_bytes(1), &mut delete_tx).unwrap(),
+            block_on(storage.remove(oid, &i32_bytes(1), &mut delete_tx)).unwrap(),
             Some(i32_bytes(10))
         );
-        storage.commit_tx(&mut delete_tx).unwrap();
+        block_on(storage.commit_tx(&mut delete_tx)).unwrap();
 
         assert_eq!(
-            storage.get(oid, &i32_bytes(1), &mut old_tx).unwrap(),
+            block_on(storage.get(oid, &i32_bytes(1), &mut old_tx)).unwrap(),
             Some(i32_bytes(10))
         );
         let mut fresh_tx = begin_tx(4, vec![]);
         assert_eq!(
-            storage.get(oid, &i32_bytes(1), &mut fresh_tx).unwrap(),
+            block_on(storage.get(oid, &i32_bytes(1), &mut fresh_tx)).unwrap(),
             None
         );
     }
@@ -750,10 +981,10 @@ mod tests {
         storage.apply_prepared_commit(prepared).unwrap();
 
         assert_eq!(
-            storage.worker_get(b"a", Some(&snapshot)).unwrap(),
+            block_on(storage.kv_get(b"a", Some(&snapshot))).unwrap(),
             Some(b"0".to_vec())
         );
-        assert_eq!(storage.worker_get(b"a", None).unwrap(), Some(b"1".to_vec()));
+        assert_eq!(block_on(storage.kv_get(b"a", None)).unwrap(), Some(b"1".to_vec()));
     }
 
     #[test]
@@ -767,7 +998,7 @@ mod tests {
             .worker_put_local(b"b".to_vec(), b"2".to_vec(), 3)
             .unwrap();
 
-        let rows = storage.worker_range(b"a", b"z", Some(&snapshot)).unwrap();
+        let rows = block_on(storage.kv_range(b"a", b"z", Some(&snapshot))).unwrap();
         assert_eq!(
             rows,
             vec![KvItem {
@@ -803,8 +1034,8 @@ mod tests {
         storage.apply_prepared_commit(prepared1).unwrap();
         storage.apply_prepared_commit(prepared2).unwrap();
 
-        assert_eq!(storage.worker_get(b"a", None).unwrap(), Some(b"1".to_vec()));
-        assert_eq!(storage.worker_get(b"b", None).unwrap(), Some(b"2".to_vec()));
+        assert_eq!(block_on(storage.kv_get(b"a", None)).unwrap(), Some(b"1".to_vec()));
+        assert_eq!(block_on(storage.kv_get(b"b", None)).unwrap(), Some(b"2".to_vec()));
     }
 
     #[test]
@@ -834,10 +1065,10 @@ mod tests {
 
         storage.replay_batch(batch).unwrap();
 
-        assert_eq!(storage.worker_get(b"k", None).unwrap(), Some(b"v".to_vec()));
+        assert_eq!(block_on(storage.kv_get(b"k", None)).unwrap(), Some(b"v".to_vec()));
         let mut tx = begin_tx(10, vec![]);
         assert_eq!(
-            storage.get(oid, &i32_bytes(7), &mut tx).unwrap(),
+            block_on(storage.get(oid, &i32_bytes(7), &mut tx)).unwrap(),
             Some(i32_bytes(70))
         );
     }
@@ -866,6 +1097,6 @@ mod tests {
 
         storage.replay_batch(batch).unwrap();
 
-        assert_eq!(storage.worker_get(b"k", None).unwrap(), None);
+        assert_eq!(block_on(storage.kv_get(b"k", None)).unwrap(), None);
     }
 }

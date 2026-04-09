@@ -248,7 +248,9 @@ fn uni_dat_value_to_json_value(value: UniDatValue) -> RS<Value> {
             UniPrimitiveValue::U32(v) => Ok(json!(v)),
             UniPrimitiveValue::I32(v) => Ok(json!(v)),
             UniPrimitiveValue::U64(v) => Ok(json!(v)),
+            UniPrimitiveValue::U128(v) => Ok(Value::String(v.to_string())),
             UniPrimitiveValue::I64(v) => Ok(json!(v)),
+            UniPrimitiveValue::I128(v) => Ok(Value::String(v.to_string())),
             UniPrimitiveValue::F32(v) => Ok(json!(v)),
             UniPrimitiveValue::F64(v) => Ok(json!(v)),
             UniPrimitiveValue::Char(v) => Ok(json!(v.to_string())),
@@ -314,6 +316,7 @@ mod tests {
     struct MockAsyncIoUringTcpClient {
         last_query: Option<ClientRequest>,
         last_execute: Option<ClientRequest>,
+        last_batch: Option<ClientRequest>,
         last_get: Option<GetRequest>,
         last_put: Option<PutRequest>,
         last_range: Option<RangeScanRequest>,
@@ -325,6 +328,7 @@ mod tests {
             Self {
                 last_query: None,
                 last_execute: None,
+                last_batch: None,
                 last_get: None,
                 last_put: None,
                 last_range: None,
@@ -348,6 +352,11 @@ mod tests {
         async fn execute(&mut self, request: ClientRequest) -> RS<ServerResponse> {
             self.last_execute = Some(request);
             Ok(ServerResponse::new(vec![], vec![], 2, None))
+        }
+
+        async fn batch(&mut self, request: ClientRequest) -> RS<ServerResponse> {
+            self.last_batch = Some(request);
+            Ok(ServerResponse::new(vec![], vec![], 3, None))
         }
 
         async fn get(&mut self, request: GetRequest) -> RS<GetResponse> {

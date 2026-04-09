@@ -75,7 +75,13 @@ impl _IndexAccessKey {
         let p = &self.param;
         let row = self
             .x_contract
-            .read_key(p.xid, p.table_id, &p.pred_key, &p.select, &p.opt_read)
+            .read_key(
+                p.tx_mgr.clone(),
+                p.table_id,
+                &p.pred_key,
+                &p.select,
+                &p.opt_read,
+            )
             .await?;
         Ok(row.map(TupleRow::new))
     }

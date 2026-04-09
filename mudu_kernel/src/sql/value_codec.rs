@@ -3,6 +3,8 @@ use mudu::common::result::RS;
 use mudu::error::ec::EC as ER;
 use mudu::m_error;
 use mudu_contract::database::sql_params::SQLParams;
+use mudu_type::dat_type_id::DatTypeID;
+use mudu_type::dat_typed::DatTyped;
 use mudu_type::datum::DatumDyn;
 use mudu_type::dt_fn_param::DatType;
 use sql_parser::ast::expr_item::ExprValue;
@@ -32,11 +34,39 @@ impl ValueCodec {
 
     pub(crate) fn binary_from_literal(literal: &ExprLiteral, dat_type: &DatType) -> RS<Buf> {
         match literal {
-            ExprLiteral::DatumLiteral(typed) => typed
+            ExprLiteral::DatumLiteral(typed) => Self::coerce_literal(typed, dat_type)?
                 .dat_internal()
                 .to_binary(dat_type)
                 .map(|binary| binary.into())
                 .map_err(|e| m_error!(ER::TypeBaseErr, "literal type mismatch", e)),
         }
+    }
+
+    fn coerce_literal(literal: &DatTyped, dat_type: &DatType) -> RS<DatTyped> {
+        let source = literal.dat_type().dat_type_id();
+        let target = dat_type.dat_type_id();
+        if source == target {
+            return Ok(literal.clone());
+        }
+
+        let coerced = match (source, target) {
+            (DatTypeID::I64, DatTypeID::I32) => {
+                DatTyped::from_i32(literal.dat_internal().to_i64() as i32)
+            }
+            (DatTypeID::I32, DatTypeID::I64) => {
+                DatTyped::from_i64(literal.dat_internal().to_i32() as i64)
+            }
+            (DatTypeID::I64, DatTypeID::I128) => {
+                DatTyped::from_i128(literal.dat_internal().to_i64() as i128)
+            }
+            (DatTypeID::I64, DatTypeID::U128) => {
+                DatTyped::from_oid(literal.dat_internal().to_i64() as u128)
+            }
+            (DatTypeID::F64, DatTypeID::F32) => {
+                DatTyped::from_f32(literal.dat_internal().to_f64() as f32)
+            }
+            _ => return Ok(literal.clone()),
+        };
+        Ok(coerced)
     }
 }

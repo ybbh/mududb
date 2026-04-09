@@ -76,7 +76,9 @@ pub fn sockaddr_to_socket_addr(addr: &SockAddrBuf) -> RS<SocketAddr> {
             if addr.len() < std::mem::size_of::<libc::sockaddr_in>() {
                 return Err(m_error!(EC::NetErr, "short sockaddr_in length"));
             }
-            let raw = unsafe { &*(addr.raw() as *const rliburing::sockaddr_storage as *const libc::sockaddr_in) };
+            let raw = unsafe {
+                &*(addr.raw() as *const rliburing::sockaddr_storage as *const libc::sockaddr_in)
+            };
             let ip = std::net::Ipv4Addr::from(u32::from_be(raw.sin_addr.s_addr).to_be_bytes());
             Ok(SocketAddr::from((ip, u16::from_be(raw.sin_port))))
         }
@@ -84,8 +86,9 @@ pub fn sockaddr_to_socket_addr(addr: &SockAddrBuf) -> RS<SocketAddr> {
             if addr.len() < std::mem::size_of::<libc::sockaddr_in6>() {
                 return Err(m_error!(EC::NetErr, "short sockaddr_in6 length"));
             }
-            let raw =
-                unsafe { &*(addr.raw() as *const rliburing::sockaddr_storage as *const libc::sockaddr_in6) };
+            let raw = unsafe {
+                &*(addr.raw() as *const rliburing::sockaddr_storage as *const libc::sockaddr_in6)
+            };
             let ip = std::net::Ipv6Addr::from(raw.sin6_addr.s6_addr);
             Ok(SocketAddr::from((ip, u16::from_be(raw.sin6_port))))
         }

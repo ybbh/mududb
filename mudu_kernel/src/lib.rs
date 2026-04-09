@@ -1,10 +1,10 @@
-mod collection;
 mod common;
 pub mod contract;
 pub mod fuzz;
 pub mod index;
 pub mod io;
 mod meta;
+pub mod mudu_conn;
 pub mod sql;
 pub mod wal;
 

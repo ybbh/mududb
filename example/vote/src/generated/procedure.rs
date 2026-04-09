@@ -337,8 +337,8 @@ pub async fn mudu_inner_p2_create_user(
     Ok(::mudu_contract::procedure::procedure_result::ProcedureResult::from(tuple, &return_desc)?)
 }
 
-pub fn mudu_argv_desc_create_user(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_argv_desc_create_user()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static ARGV_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -353,8 +353,8 @@ pub fn mudu_argv_desc_create_user(
     })
 }
 
-pub fn mudu_result_desc_create_user(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_result_desc_create_user()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static RESULT_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -426,8 +426,8 @@ pub async fn mudu_inner_p2_cast_vote(
     Ok(::mudu_contract::procedure::procedure_result::ProcedureResult::from(tuple, &return_desc)?)
 }
 
-pub fn mudu_argv_desc_cast_vote(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_argv_desc_cast_vote()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static ARGV_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -464,8 +464,8 @@ pub fn mudu_argv_desc_cast_vote(
     })
 }
 
-pub fn mudu_result_desc_cast_vote(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_result_desc_cast_vote()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static RESULT_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -532,8 +532,8 @@ pub async fn mudu_inner_p2_get_vote_result(
     Ok(::mudu_contract::procedure::procedure_result::ProcedureResult::from(tuple, &return_desc)?)
 }
 
-pub fn mudu_argv_desc_get_vote_result(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_argv_desc_get_vote_result()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static ARGV_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -548,8 +548,8 @@ pub fn mudu_argv_desc_get_vote_result(
     })
 }
 
-pub fn mudu_result_desc_get_vote_result(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_result_desc_get_vote_result()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static RESULT_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -617,8 +617,8 @@ pub async fn mudu_inner_p2_get_voting_history(
     Ok(::mudu_contract::procedure::procedure_result::ProcedureResult::from(tuple, &return_desc)?)
 }
 
-pub fn mudu_argv_desc_get_voting_history(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_argv_desc_get_voting_history()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static ARGV_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -633,8 +633,8 @@ pub fn mudu_argv_desc_get_voting_history(
     })
 }
 
-pub fn mudu_result_desc_get_voting_history(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_result_desc_get_voting_history()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static RESULT_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -649,8 +649,8 @@ pub fn mudu_result_desc_get_voting_history(
     })
 }
 
-pub fn mudu_proc_desc_get_voting_history(
-) -> &'static ::mudu_contract::procedure::proc_desc::ProcDesc {
+pub fn mudu_proc_desc_get_voting_history()
+-> &'static ::mudu_contract::procedure::proc_desc::ProcDesc {
     static _PROC_DESC: std::sync::OnceLock<::mudu_contract::procedure::proc_desc::ProcDesc> =
         std::sync::OnceLock::new();
     _PROC_DESC.get_or_init(|| {
@@ -709,8 +709,8 @@ pub async fn mudu_inner_p2_add_option(
     Ok(::mudu_contract::procedure::procedure_result::ProcedureResult::from(tuple, &return_desc)?)
 }
 
-pub fn mudu_argv_desc_add_option(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_argv_desc_add_option()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static ARGV_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -726,8 +726,8 @@ pub fn mudu_argv_desc_add_option(
     })
 }
 
-pub fn mudu_result_desc_add_option(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_result_desc_add_option()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static RESULT_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -799,8 +799,8 @@ pub async fn mudu_inner_p2_create_vote(
     Ok(::mudu_contract::procedure::procedure_result::ProcedureResult::from(tuple, &return_desc)?)
 }
 
-pub fn mudu_argv_desc_create_vote(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_argv_desc_create_vote()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static ARGV_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -849,8 +849,8 @@ pub fn mudu_argv_desc_create_vote(
     })
 }
 
-pub fn mudu_result_desc_create_vote(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_result_desc_create_vote()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static RESULT_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -918,8 +918,8 @@ pub async fn mudu_inner_p2_withdraw_vote(
     Ok(::mudu_contract::procedure::procedure_result::ProcedureResult::from(tuple, &return_desc)?)
 }
 
-pub fn mudu_argv_desc_withdraw_vote(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_argv_desc_withdraw_vote()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static ARGV_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -934,8 +934,8 @@ pub fn mudu_argv_desc_withdraw_vote(
     })
 }
 
-pub fn mudu_result_desc_withdraw_vote(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_result_desc_withdraw_vote()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static RESULT_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();

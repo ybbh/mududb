@@ -6,6 +6,9 @@ pub type OID = u128;
 // Nth attribute index of data tuple
 pub type AttrIndex = usize;
 
+// Nth datum position inside a key or value tuple
+pub type DatumIndex = usize;
+
 pub type TupleID = u64;
 pub type ThdID = u64;
 

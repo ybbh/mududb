@@ -262,6 +262,8 @@ fn _to_turso_value(datum: &DatValue, ty: &DatType) -> RS<turso::Value> {
     let v = match id {
         DatTypeID::I32 => turso::Value::Integer(datum.expect_i32().clone() as _),
         DatTypeID::I64 => turso::Value::Integer(datum.expect_i64().clone() as _),
+        DatTypeID::U128 => turso::Value::Text(datum.expect_u128().to_string()),
+        DatTypeID::I128 => turso::Value::Text(datum.expect_i128().to_string()),
         DatTypeID::F32 => turso::Value::Real(datum.expect_f32().clone() as _),
         DatTypeID::F64 => turso::Value::Real(datum.expect_f64().clone() as _),
         DatTypeID::String => turso::Value::Text(datum.expect_string().clone()),

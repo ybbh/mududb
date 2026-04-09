@@ -4,9 +4,9 @@ use crate::db_libsql_async::result_set::{LibSQLAsyncResultSet, ResultSetLease};
 use async_trait::async_trait;
 use futures::TryFutureExt;
 use lazy_static::lazy_static;
-use libsql::{params_from_iter, Builder, Connection, Database, Statement, Transaction};
+use libsql::{Builder, Connection, Database, Statement, Transaction, params_from_iter};
 use mudu::common::result::RS;
-use mudu::common::xid::{new_xid, XID};
+use mudu::common::xid::{XID, new_xid};
 use mudu::error::ec::EC;
 use mudu::error::err::MError;
 use mudu::m_error;
@@ -259,6 +259,8 @@ fn _to_libsql_value(datum: &DatValue, ty: &DatType) -> RS<libsql::Value> {
     let v = match id {
         DatTypeID::I32 => libsql::Value::Integer(datum.expect_i32().clone() as _),
         DatTypeID::I64 => libsql::Value::Integer(datum.expect_i64().clone() as _),
+        DatTypeID::U128 => libsql::Value::Text(datum.expect_u128().to_string()),
+        DatTypeID::I128 => libsql::Value::Text(datum.expect_i128().to_string()),
         DatTypeID::F32 => libsql::Value::Real(datum.expect_f32().clone() as _),
         DatTypeID::F64 => libsql::Value::Real(datum.expect_f64().clone() as _),
         DatTypeID::String => libsql::Value::Text(datum.expect_string().clone()),
@@ -397,7 +399,7 @@ impl ResultSetLease for PreparedSlotLease {
 
 #[cfg(test)]
 mod tests {
-    use libsql::{params, Builder, Value};
+    use libsql::{Builder, Value, params};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_db_path(label: &str) -> String {

@@ -2,15 +2,15 @@ use clap::Parser;
 use mudu::common::result::RS;
 use mudu::common::xid::XID;
 use mudu_binding::universal::uni_session_open_argv::UniSessionOpenArgv;
-use mudu_cli::management::{fetch_server_topology, ServerTopology};
+use mudu_cli::management::{ServerTopology, fetch_server_topology};
 use mudu_contract::database::sql_stmt_text::SQLStmtText;
 use mudu_utils::debug::debug_serve;
 use mudu_utils::notifier::NotifyWait;
 use mudu_utils::task::spawn_task;
 use mudu_utils::task_trace;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Barrier as StdBarrier;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 use sys_interface::async_api::{

@@ -8,9 +8,7 @@ use crate::server::worker::IoUringWorker;
 use mudu::common::result::RS;
 use mudu::error::ec::EC;
 use mudu::m_error;
-use mudu_contract::protocol::{
-    decode_client_request, encode_server_response, Frame, MessageType, ServerResponse, HEADER_LEN,
-};
+use mudu_contract::protocol::{Frame, MessageType, HEADER_LEN};
 
 pub fn try_decode_next_frame(buf: &[u8]) -> RS<Option<(Frame, usize)>> {
     if buf.len() < HEADER_LEN {
@@ -39,24 +37,12 @@ pub async fn dispatch_frame_async(
         return result;
     }
     match frame.header().message_type() {
-        MessageType::Query | MessageType::Execute => {
-            let request = decode_client_request(frame)?;
-            Ok(HandleResult::Response(encode_server_response(
-                frame.header().request_id(),
-                &ServerResponse::new(
-                    vec![],
-                    vec![],
-                    0,
-                    Some(format!(
-                        "SQL interface is disabled in the client backend for app '{}'",
-                        request.app_name()
-                    )),
-                ),
-            )?))
-        }
         MessageType::Get
         | MessageType::Put
         | MessageType::RangeScan
+        | MessageType::Query
+        | MessageType::Execute
+        | MessageType::Batch
         | MessageType::ProcedureInvoke
         | MessageType::SessionCreate
         | MessageType::SessionClose => unreachable!(),

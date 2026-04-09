@@ -1,3 +1,5 @@
+use crate::mudu_conn::mudu_conn_core::MuduConnCore;
+use crate::contract::meta_mgr::MetaMgr;
 use crate::server::async_func_runtime::AsyncFuncInvokerPtr;
 use crate::server::routing::{
     route_worker, RoutingContext, RoutingMode, SessionOpenConfig, SessionOpenTransferAction,
@@ -9,14 +11,18 @@ use crate::server::worker_local::{WorkerExecute, WorkerLocalRef};
 use crate::server::worker_registry::{WorkerIdentity, WorkerRegistry};
 use crate::server::worker_session_manager::{SessionContext, WorkerSessionManager};
 use crate::server::worker_snapshot::KvItem;
-use crate::server::worker_tx_manager::WorkerTxManager;
 use crate::server::x_contract::IoUringXContract;
 use crate::wal::worker_log::{ChunkedWorkerLogBackend, WorkerLogBatching, WorkerLogLayout};
 use crate::wal::xl_batch::XLBatch;
+use crate::x_engine::api::XContract;
+use crate::x_engine::tx_mgr::TxMgr;
 use mudu::common::id::OID;
 use mudu::common::result::RS;
 use mudu::error::ec::EC;
 use mudu::m_error;
+use mudu_contract::database::result_set::ResultSetAsync;
+use mudu_contract::database::sql_params::SQLParams;
+use mudu_contract::database::sql_stmt::SQLStmt;
 use mudu_contract::protocol::{ProcedureInvokeRequest, ProcedureInvokeResponse};
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -29,6 +35,12 @@ use std::sync::Arc;
 /// The `IoUringWorker` name is also historical. The type is shared by both the
 /// Linux native `io_uring` loop and the non-Linux fallback loop so upper
 /// layers do not need target-specific worker abstractions.
+///
+/// Workers are sized around execution resources such as CPU cores, while
+/// partitions are derived from user-defined data partitioning. The system does
+/// not require partitions to map one-to-one to workers, although the current
+/// runtime path still operates on a single active partition per worker. A
+/// worker may own multiple partitions in the future.
 pub struct IoUringWorker {
     worker_index: usize,
     worker_id: OID,
@@ -78,6 +90,8 @@ impl IoUringWorker {
         registry: Arc<WorkerRegistry>,
     ) -> RS<Self> {
         let active_sessions = Arc::new(AtomicUsize::new(0));
+        // The runtime currently activates only the first partition assigned to
+        // this worker, while preserving `partition_ids` for future multi-partition support.
         let partition_id = identity.partition_ids.first().copied().ok_or_else(|| {
             m_error!(
                 EC::ParseErr,
@@ -91,20 +105,25 @@ impl IoUringWorker {
             log_layout.clone(),
             active_sessions.clone(),
         )?;
+        let contract = Arc::new(IoUringXContract::with_worker_log_and_data_dir(
+            log,
+            partition_id,
+            data_dir,
+        ));
+        let session_manager = Arc::new(WorkerSessionManager::new(
+            active_sessions,
+            contract.meta_mgr(),
+        ));
         Ok(Self {
             worker_index: identity.worker_index,
             worker_id,
             partition_ids: identity.partition_ids,
             worker_count,
             routing_mode,
-            contract: Arc::new(IoUringXContract::with_worker_log_and_data_dir(
-                log,
-                partition_id,
-                data_dir,
-            )),
+            contract: contract.clone(),
             log_layout,
             procedure_runtime,
-            session_manager: Arc::new(WorkerSessionManager::new(active_sessions)),
+            session_manager,
             registry,
         })
     }
@@ -167,14 +186,14 @@ impl IoUringWorker {
         self.session_manager.session_context(session_id)
     }
 
-    pub fn get_for_connection(
+    pub async fn get_for_connection(
         &self,
         conn_id: u64,
         session_id: OID,
         key: &[u8],
     ) -> RS<Option<Vec<u8>>> {
         self.ensure_session_owned_by_connection(conn_id, session_id)?;
-        self.get_in_session(session_id, key)
+        self.get_in_session(session_id, key).await
     }
 
     pub fn put_for_connection(
@@ -199,7 +218,7 @@ impl IoUringWorker {
         self.put_in_session_async(session_id, key, value).await
     }
 
-    pub fn range_for_connection(
+    pub async fn range_for_connection(
         &self,
         conn_id: u64,
         session_id: OID,
@@ -207,47 +226,22 @@ impl IoUringWorker {
         end_key: &[u8],
     ) -> RS<Vec<KvItem>> {
         self.ensure_session_owned_by_connection(conn_id, session_id)?;
-        self.range_in_session(session_id, start_key, end_key)
+        self.range_in_session(session_id, start_key, end_key).await
     }
 
     #[allow(dead_code)]
     fn execute_tx(&self, session_id: OID, instruction: WorkerExecute) -> RS<()> {
-        let session = self.session_context(session_id)?;
         match instruction {
-            WorkerExecute::BeginTx => {
-                if session.tx_manager_ref().is_some() {
-                    return Err(m_error!(
-                        EC::ExistingSuchElement,
-                        format!("session {} already has an active transaction", session_id)
-                    ));
-                }
-                session
-                    .set_tx_manager(Some(WorkerTxManager::new(self.contract.worker_begin_tx()?)));
-                Ok(())
-            }
+            WorkerExecute::BeginTx => self
+                .session_manager
+                .begin_session_tx(session_id, self.contract.worker_begin_tx()?),
             WorkerExecute::CommitTx => {
-                let tx_manager = session.take_tx_manager().ok_or_else(|| {
-                    m_error!(
-                        EC::NoSuchElement,
-                        format!("session {} has no active transaction", session_id)
-                    )
-                })?;
-                let snapshot = tx_manager.snapshot().clone();
-                let xid = tx_manager.xid();
-                let items = tx_manager.staged_put_items();
-                let batch = tx_manager.into_xl_batch();
-                self.contract
-                    .worker_commit_put_batch(&snapshot, xid, items, batch)?;
-                Ok(())
+                let tx_manager = self.session_manager.take_session_tx(session_id)?;
+                self.contract.worker_commit_tx(tx_manager)
             }
             WorkerExecute::RollbackTx => {
-                let tx_manager = session.take_tx_manager().ok_or_else(|| {
-                    m_error!(
-                        EC::NoSuchElement,
-                        format!("session {} has no active transaction", session_id)
-                    )
-                })?;
-                self.contract.worker_rollback_tx(tx_manager.xid())?;
+                let tx_manager = self.session_manager.take_session_tx(session_id)?;
+                self.contract.worker_rollback_tx(tx_manager)?;
                 Ok(())
             }
         }
@@ -258,56 +252,32 @@ impl IoUringWorker {
         session_id: OID,
         instruction: WorkerExecute,
     ) -> RS<()> {
-        let session = self.session_context(session_id)?;
         match instruction {
-            WorkerExecute::BeginTx => {
-                if session.tx_manager_ref().is_some() {
-                    return Err(m_error!(
-                        EC::ExistingSuchElement,
-                        format!("session {} already has an active transaction", session_id)
-                    ));
-                }
-                session
-                    .set_tx_manager(Some(WorkerTxManager::new(self.contract.worker_begin_tx()?)));
-                Ok(())
-            }
+            WorkerExecute::BeginTx => self
+                .session_manager
+                .begin_session_tx(session_id, self.contract.worker_begin_tx()?),
             WorkerExecute::CommitTx => {
-                let tx_manager = session.take_tx_manager().ok_or_else(|| {
-                    m_error!(
-                        EC::NoSuchElement,
-                        format!("session {} has no active transaction", session_id)
-                    )
-                })?;
-                let snapshot = tx_manager.snapshot().clone();
-                let xid = tx_manager.xid();
-                let items = tx_manager.staged_put_items();
-                let batch = tx_manager.into_xl_batch();
-                self.contract
-                    .worker_commit_put_batch_async(&snapshot, xid, items, batch)
-                    .await
+                let tx_manager = self.session_manager.take_session_tx(session_id)?;
+                self.contract.worker_commit_tx_async(tx_manager).await
             }
             WorkerExecute::RollbackTx => {
-                let tx_manager = session.take_tx_manager().ok_or_else(|| {
-                    m_error!(
-                        EC::NoSuchElement,
-                        format!("session {} has no active transaction", session_id)
-                    )
-                })?;
-                self.contract.worker_rollback_tx(tx_manager.xid())?;
+                let tx_manager = self.session_manager.take_session_tx(session_id)?;
+                self.contract.worker_rollback_tx(tx_manager)?;
                 Ok(())
             }
         }
     }
 
     fn put_in_session(&self, session_id: OID, key: Vec<u8>, value: Vec<u8>) -> RS<()> {
-        let session = self.session_context(session_id)?;
-        match session.tx_manager_mut().as_mut() {
-            Some(tx_manager) => {
-                tx_manager.put(key, value);
-                Ok(())
+        self.session_manager.with_session_tx(session_id, |tx_manager| {
+            match tx_manager {
+                Some(tx_manager) => {
+                    tx_manager.put(key, value);
+                    Ok(())
+                }
+                None => self.contract.worker_put(key, value),
             }
-            None => self.contract.worker_put(key, value),
-        }
+        })
     }
 
     pub(crate) async fn put_in_session_async(
@@ -316,65 +286,86 @@ impl IoUringWorker {
         key: Vec<u8>,
         value: Vec<u8>,
     ) -> RS<()> {
-        let session = self.session_context(session_id)?;
-        match session.tx_manager_mut().as_mut() {
-            Some(tx_manager) => {
-                tx_manager.put(key, value);
-                Ok(())
-            }
-            None => self.contract.worker_put_async(key, value).await,
+        let handled = self
+            .session_manager
+            .with_session_tx(session_id, |tx_manager| match tx_manager {
+                Some(tx_manager) => {
+                    tx_manager.put(key.clone(), value.clone());
+                    Ok(true)
+                }
+                None => Ok(false),
+            })?;
+        if handled {
+            Ok(())
+        } else {
+            self.contract.worker_put_async(key, value).await
         }
     }
 
     pub(crate) async fn delete_in_session_async(&self, session_id: OID, key: &[u8]) -> RS<()> {
-        let session = self.session_context(session_id)?;
-        match session.tx_manager_mut().as_mut() {
-            Some(tx_manager) => {
-                tx_manager.delete(key.to_vec());
-                Ok(())
-            }
-            None => self.contract.worker_delete_async(key).await,
+        let key_vec = key.to_vec();
+        let handled = self
+            .session_manager
+            .with_session_tx(session_id, |tx_manager| match tx_manager {
+                Some(tx_manager) => {
+                    tx_manager.delete(key_vec.clone());
+                    Ok(true)
+                }
+                None => Ok(false),
+            })?;
+        if handled {
+            Ok(())
+        } else {
+            self.contract.worker_delete_async(key).await
         }
     }
 
-    pub(crate) fn get_in_session(&self, session_id: OID, key: &[u8]) -> RS<Option<Vec<u8>>> {
-        let session = self.session_context(session_id)?;
-        let staged = session
-            .tx_manager_ref()
+    pub(crate) async fn get_in_session(&self, session_id: OID, key: &[u8]) -> RS<Option<Vec<u8>>> {
+        let tx_manager = self
+            .session_manager
+            .with_session_tx(session_id, |tx_manager| Ok(tx_manager))?;
+        let staged = tx_manager
             .as_ref()
             .and_then(|tx_manager| tx_manager.get(key));
         match staged {
             Some(value) => Ok(value),
-            None => match session.tx_manager_ref().as_ref() {
-                Some(tx_manager) => self
-                    .contract
-                    .worker_get_with_snapshot(tx_manager.snapshot(), key),
-                None => self.contract.worker_get(key),
+            None => match tx_manager {
+                Some(tx_manager) => {
+                    self.contract
+                        .worker_get_with_snapshot_async(&tx_manager.snapshot(), key)
+                        .await
+                }
+                None => self.contract.worker_get_async(key).await,
             },
         }
     }
 
-    pub(crate) fn range_in_session(
+    pub(crate) async fn range_in_session(
         &self,
         session_id: OID,
         start_key: &[u8],
         end_key: &[u8],
     ) -> RS<Vec<KvItem>> {
-        let session = self.session_context(session_id)?;
-        let staged = session
-            .tx_manager_ref()
+        let tx_manager = self
+            .session_manager
+            .with_session_tx(session_id, |tx_manager| Ok(tx_manager))?;
+        let staged = tx_manager
             .as_ref()
             .map(|tx_manager| tx_manager.staged_items_in_range(start_key, end_key))
             .unwrap_or_default();
 
         let mut merged = BTreeMap::new();
-        let base_items = match session.tx_manager_ref().as_ref() {
-            Some(tx_manager) => self.contract.worker_range_scan_with_snapshot(
-                tx_manager.snapshot(),
-                start_key,
-                end_key,
-            )?,
-            None => self.contract.worker_range_scan(start_key, end_key)?,
+        let base_items = match tx_manager {
+            Some(tx_manager) => {
+                self.contract
+                    .worker_range_scan_with_snapshot_async(
+                        &tx_manager.snapshot(),
+                        start_key,
+                        end_key,
+                    )
+                    .await?
+            }
+            None => self.contract.worker_range_scan_async(start_key, end_key).await?,
         };
         for item in base_items {
             merged.insert(item.key, Some(item.value));
@@ -439,6 +430,198 @@ impl IoUringWorker {
 
     pub fn worker_log(&self) -> Option<ChunkedWorkerLogBackend> {
         self.contract.worker_log()
+    }
+
+    pub fn x_contract(&self) -> Arc<dyn XContract> {
+        self.contract.clone()
+    }
+
+    pub fn meta_mgr(&self) -> Arc<dyn MetaMgr> {
+        self.contract.meta_mgr()
+    }
+
+    fn sql_core(&self, oid: OID) -> RS<Arc<MuduConnCore>> {
+        if oid == 0 {
+            return Ok(Arc::new(MuduConnCore::new(self.meta_mgr())));
+        }
+        Ok(self.session_context(oid)?.mudu_conn_core())
+    }
+
+    fn sql_tx_mgr(&self, oid: OID) -> RS<Option<Arc<dyn TxMgr>>> {
+        if oid == 0 {
+            return Ok(None);
+        }
+        self.session_manager
+            .with_session_tx(oid, |tx_manager| Ok(tx_manager))
+    }
+
+    async fn run_sql_query_with_tx(
+        &self,
+        core: Arc<MuduConnCore>,
+        stmt: Box<dyn SQLStmt>,
+        param: Box<dyn SQLParams>,
+        tx_mgr: Arc<dyn TxMgr>,
+    ) -> RS<Arc<dyn ResultSetAsync>> {
+        let stmt = core.parse_one(stmt.as_ref())?;
+        core.query(stmt, param, tx_mgr, self.contract.clone()).await
+    }
+
+    async fn run_sql_execute_with_tx(
+        &self,
+        core: Arc<MuduConnCore>,
+        stmt: Box<dyn SQLStmt>,
+        param: Box<dyn SQLParams>,
+        tx_mgr: Arc<dyn TxMgr>,
+    ) -> RS<u64> {
+        let stmt = core.parse_one(stmt.as_ref())?;
+        core.execute(stmt, param, tx_mgr, self.contract.clone()).await
+    }
+
+    pub(crate) async fn query(
+        &self,
+        oid: OID,
+        sql: Box<dyn SQLStmt>,
+        param: Box<dyn SQLParams>,
+    ) -> RS<Arc<dyn ResultSetAsync>> {
+        let core = self.sql_core(oid)?;
+        if oid == 0 {
+            let tx_mgr = self.contract.begin_tx().await?;
+            let result = self
+                .run_sql_query_with_tx(core, sql, param, tx_mgr.clone())
+                .await;
+            if result.is_ok() {
+                self.contract.commit_tx(tx_mgr).await?;
+            } else {
+                self.contract.abort_tx(tx_mgr).await?;
+            }
+            return result;
+        }
+        let started_tx = if self.session_manager.has_session_tx(oid)? {
+            false
+        } else {
+            self.session_manager
+                .begin_session_tx(oid, self.contract.worker_begin_tx()?)?;
+            true
+        };
+        let tx_mgr = self
+            .sql_tx_mgr(oid)?
+            .ok_or_else(|| m_error!(EC::InternalErr, "session transaction is missing"))?;
+        let result = self.run_sql_query_with_tx(core, sql, param, tx_mgr).await;
+        if started_tx {
+            let tx_manager = self.session_manager.take_session_tx(oid)?;
+            if result.is_ok() {
+                self.contract.worker_commit_tx_async(tx_manager).await?;
+            } else {
+                self.contract.worker_rollback_tx(tx_manager)?;
+            }
+        }
+        result
+    }
+
+    pub(crate) async fn execute(
+        &self,
+        oid: OID,
+        sql: Box<dyn SQLStmt>,
+        param: Box<dyn SQLParams>,
+    ) -> RS<u64> {
+        let core = self.sql_core(oid)?;
+        if oid == 0 {
+            let tx_mgr = self.contract.begin_tx().await?;
+            let result = self
+                .run_sql_execute_with_tx(core, sql, param, tx_mgr.clone())
+                .await;
+            if result.is_ok() {
+                self.contract.commit_tx(tx_mgr).await?;
+            } else {
+                self.contract.abort_tx(tx_mgr).await?;
+            }
+            return result;
+        }
+        let started_tx = if self.session_manager.has_session_tx(oid)? {
+            false
+        } else {
+            self.session_manager
+                .begin_session_tx(oid, self.contract.worker_begin_tx()?)?;
+            true
+        };
+        let tx_mgr = self
+            .sql_tx_mgr(oid)?
+            .ok_or_else(|| m_error!(EC::InternalErr, "session transaction is missing"))?;
+        let result = self.run_sql_execute_with_tx(core, sql, param, tx_mgr).await;
+        if started_tx {
+            let tx_manager = self.session_manager.take_session_tx(oid)?;
+            if result.is_ok() {
+                self.contract.worker_commit_tx_async(tx_manager).await?;
+            } else {
+                self.contract.worker_rollback_tx(tx_manager)?;
+            }
+        }
+        result
+    }
+
+    pub(crate) async fn batch(
+        &self,
+        oid: OID,
+        sql: Box<dyn SQLStmt>,
+        param: Box<dyn SQLParams>,
+    ) -> RS<u64> {
+        if param.size() != 0 {
+            return Err(m_error!(
+                EC::NotImplemented,
+                "batch with parameters is not implemented"
+            ));
+        }
+        let core = self.sql_core(oid)?;
+        let stmts = core.parse_many(sql.as_ref())?;
+        if oid == 0 {
+            let tx_mgr = self.contract.begin_tx().await?;
+            let mut total = 0;
+            for stmt in stmts {
+                match core
+                    .execute(stmt, Box::new(()), tx_mgr.clone(), self.contract.clone())
+                    .await
+                {
+                    Ok(affected) => total += affected,
+                    Err(err) => {
+                        self.contract.abort_tx(tx_mgr).await?;
+                        return Err(err);
+                    }
+                }
+            }
+            self.contract.commit_tx(tx_mgr).await?;
+            return Ok(total);
+        }
+        let started_tx = if self.session_manager.has_session_tx(oid)? {
+            false
+        } else {
+            self.session_manager
+                .begin_session_tx(oid, self.contract.worker_begin_tx()?)?;
+            true
+        };
+        let tx_mgr = self
+            .sql_tx_mgr(oid)?
+            .ok_or_else(|| m_error!(EC::InternalErr, "session transaction is missing"))?;
+        let mut total = 0;
+        for stmt in stmts {
+            match core
+                .execute(stmt, Box::new(()), tx_mgr.clone(), self.contract.clone())
+                .await
+            {
+                Ok(affected) => total += affected,
+                Err(err) => {
+                    if started_tx {
+                        let tx_manager = self.session_manager.take_session_tx(oid)?;
+                        self.contract.worker_rollback_tx(tx_manager)?;
+                    }
+                    return Err(err);
+                }
+            }
+        }
+        if started_tx {
+            let tx_manager = self.session_manager.take_session_tx(oid)?;
+            self.contract.worker_commit_tx_async(tx_manager).await?;
+        }
+        Ok(total)
     }
 
     pub fn replay_log_batch(&self, batch: XLBatch) -> RS<()> {
@@ -636,16 +819,20 @@ mod tests {
     fn test_schema() -> SchemaTable {
         SchemaTable::new(
             "t".to_string(),
-            vec![SchemaColumn::new(
-                "id".to_string(),
-                DatTypeID::I32,
-                DTInfo::from_text(DatTypeID::I32, String::new()),
-            )],
-            vec![SchemaColumn::new(
-                "v".to_string(),
-                DatTypeID::I32,
-                DTInfo::from_text(DatTypeID::I32, String::new()),
-            )],
+            vec![
+                SchemaColumn::new(
+                    "id".to_string(),
+                    DatTypeID::I32,
+                    DTInfo::from_text(DatTypeID::I32, String::new()),
+                ),
+                SchemaColumn::new(
+                    "v".to_string(),
+                    DatTypeID::I32,
+                    DTInfo::from_text(DatTypeID::I32, String::new()),
+                ),
+            ],
+            vec![0],
+            vec![1],
         )
     }
 
@@ -820,7 +1007,9 @@ mod tests {
         );
         let schema = test_schema();
         let table_id = schema.id();
-        contract.create_table(0, &schema).await.unwrap();
+        let tx_mgr = contract.begin_tx().await.unwrap();
+        contract.create_table(tx_mgr.clone(), &schema).await.unwrap();
+        contract.commit_tx(tx_mgr).await.unwrap();
 
         let key_path = TimeSeriesFile::relation_file_path(&log_dir, partition_id, table_id, 0);
         let value_path = TimeSeriesFile::relation_file_path(&log_dir, partition_id, table_id, 1);
@@ -933,7 +1122,7 @@ mod tests {
             .prepare_connection_transfer(conn_id, Some(action))
             .unwrap();
         assert_eq!(transferred.len(), 2);
-        assert!(source.get_for_connection(conn_id, session_a, b"k").is_err());
+        assert!(futures::executor::block_on(source.get_for_connection(conn_id, session_a, b"k")).is_err());
 
         target
             .adopt_connection_sessions(conn_id, &transferred)
@@ -948,7 +1137,7 @@ mod tests {
             .put_for_connection(conn_id, session_b, b"k".to_vec(), b"v".to_vec())
             .unwrap();
         assert_eq!(
-            target.get_for_connection(conn_id, session_b, b"k").unwrap(),
+            futures::executor::block_on(target.get_for_connection(conn_id, session_b, b"k")).unwrap(),
             Some(b"v".to_vec())
         );
     }

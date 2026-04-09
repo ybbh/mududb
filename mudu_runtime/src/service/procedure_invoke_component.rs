@@ -1,6 +1,6 @@
 use crate::procedure::procedure::Procedure;
 use crate::service::runtime_opt::ComponentTarget;
-use crate::service::wasi_context_component::{build_wasi_component_context, WasiContextComponent};
+use crate::service::wasi_context_component::{WasiContextComponent, build_wasi_component_context};
 use mudu::common::result::RS;
 use mudu::error::ec::EC;
 use mudu::m_error;
@@ -10,8 +10,8 @@ use mudu_contract::procedure::procedure_param::ProcedureParam;
 use mudu_contract::procedure::procedure_result::ProcedureResult;
 use mudu_kernel::server::worker_local::WorkerLocalRef;
 use std::sync::Mutex;
-use wasmtime::component::{InstancePre, TypedFunc};
 use wasmtime::Store;
+use wasmtime::component::{InstancePre, TypedFunc};
 
 pub struct ProcedureInvokeComponent {
     inner: Mutex<ProcedureInvokeInner>,

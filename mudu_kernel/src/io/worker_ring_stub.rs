@@ -27,6 +27,10 @@ pub(crate) fn has_current_worker_ring() -> bool {
     false
 }
 
+pub(crate) fn current_ring() -> &'static WorkerLocalRing {
+    panic!("worker ring is only available on linux")
+}
+
 pub(crate) fn with_current_ring<F, R>(_f: F) -> RS<R>
 where
     F: FnOnce(&Arc<WorkerLocalRing>) -> RS<R>,

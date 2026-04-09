@@ -5,9 +5,9 @@ use std::sync::Arc;
 use crate::contract::schema_table::SchemaTable;
 use crate::x_engine::dat_bin::DatBin;
 use crate::x_engine::operator::Operator;
+use crate::x_engine::tx_mgr::TxMgr;
 use mudu::common::id::{AttrIndex, OID};
 use mudu::common::result::RS;
-use mudu::common::xid::XID;
 use mudu_contract::tuple::tuple_field::TupleField;
 
 pub type TupleRow = TupleField;
@@ -87,7 +87,7 @@ pub struct OptDelete {}
 /// [`XContract`] is the storage-facing contract behind SQL execution and the
 /// worker-local runtime. All stable schema objects are addressed by immutable
 /// object identifiers such as [`OID`], while each write/read statement is
-/// executed inside a transaction identified by [`XID`].
+/// executed inside a transaction identified by a [`TxMgr`] handle.
 ///
 /// Conventions:
 /// - `table_id` always identifies the target table by OID.
@@ -99,31 +99,36 @@ pub struct OptDelete {}
 pub trait XContract: Send + Sync {
     /// Creates a table described by `schema`.
     ///
-    /// `xid` is accepted for interface uniformity; implementations may treat
+    /// `tx_mgr` is accepted for interface uniformity; implementations may treat
     /// DDL as autocommit if transactional DDL is not supported.
-    async fn create_table(&self, xid: XID, schema: &SchemaTable) -> RS<()>;
+    async fn create_table(&self, tx_mgr: Arc<dyn TxMgr>, schema: &SchemaTable) -> RS<()>;
 
     /// Drops the table identified by `oid`.
-    async fn drop_table(&self, xid: XID, oid: OID) -> RS<()>;
+    async fn drop_table(&self, tx_mgr: Arc<dyn TxMgr>, oid: OID) -> RS<()>;
 
     /// Applies an alter-table operation to the target table.
-    async fn alter_table(&self, xid: XID, oid: OID, alter_table: &AlterTable) -> RS<()>;
+    async fn alter_table(
+        &self,
+        tx_mgr: Arc<dyn TxMgr>,
+        oid: OID,
+        alter_table: &AlterTable,
+    ) -> RS<()>;
 
-    /// Starts a new transaction and returns its transaction id.
-    async fn begin_tx(&self) -> RS<XID>;
+    /// Starts a new transaction and returns its transaction manager.
+    async fn begin_tx(&self) -> RS<Arc<dyn TxMgr>>;
 
-    /// Commits the transaction identified by `xid`.
-    async fn commit_tx(&self, xid: XID) -> RS<()>;
+    /// Commits the transaction identified by `tx_mgr`.
+    async fn commit_tx(&self, tx_mgr: Arc<dyn TxMgr>) -> RS<()>;
 
-    /// Aborts the transaction identified by `xid`.
-    async fn abort_tx(&self, xid: XID) -> RS<()>;
+    /// Aborts the transaction identified by `tx_mgr`.
+    async fn abort_tx(&self, tx_mgr: Arc<dyn TxMgr>) -> RS<()>;
 
     /// Updates rows that match the provided key and non-key predicates.
     ///
     /// Returns the number of visible rows updated.
     async fn update(
         &self,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         pred_key: &VecDatum,
         pred_non_key: &Predicate,
@@ -136,7 +141,7 @@ pub trait XContract: Send + Sync {
     /// Returns `None` when the key is not visible in the transaction snapshot.
     async fn read_key(
         &self,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         pred_key: &VecDatum,
         select: &VecSelTerm,
@@ -149,7 +154,7 @@ pub trait XContract: Send + Sync {
     /// order of the range scan.
     async fn read_range(
         &self,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         pred_key: &RangeData,
         pred_non_key: &Predicate,
@@ -162,7 +167,7 @@ pub trait XContract: Send + Sync {
     /// Returns the number of visible rows deleted.
     async fn delete(
         &self,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         pred_key: &VecDatum,
         pred_non_key: &Predicate,
@@ -172,7 +177,7 @@ pub trait XContract: Send + Sync {
     /// Inserts one row identified by `keys` with payload columns from `values`.
     async fn insert(
         &self,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         keys: &VecDatum,
         values: &VecDatum,

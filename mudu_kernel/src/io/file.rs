@@ -738,7 +738,12 @@ pub(crate) fn submit_file_io(
 ) -> FileInflightOp {
     match request {
         FileIoRequest::Open(request) => {
-            sqe.prep_openat(libc::AT_FDCWD, request.path().as_c_str(), request.flags(), request.mode());
+            sqe.prep_openat(
+                libc::AT_FDCWD,
+                request.path().as_c_str(),
+                request.flags(),
+                request.mode(),
+            );
             FileInflightOp::Open(Box::new(request))
         }
         FileIoRequest::Close(request) => {
@@ -747,7 +752,12 @@ pub(crate) fn submit_file_io(
         }
         FileIoRequest::Read(request) => {
             let mut buf = vec![0u8; request.len()];
-            sqe.prep_read_raw(request.fd(), buf.as_mut_ptr(), request.len(), request.offset());
+            sqe.prep_read_raw(
+                request.fd(),
+                buf.as_mut_ptr(),
+                request.len(),
+                request.offset(),
+            );
             FileInflightOp::Read {
                 request: Box::new(request),
                 buf,
