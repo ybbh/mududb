@@ -28,7 +28,7 @@ use crate::service::app_inst::AppInst;
 use crate::service::runtime::Runtime;
 use actix_cors::Cors;
 use actix_web::http::StatusCode;
-use actix_web::{delete, get, post, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{App, HttpResponse, HttpServer, Responder, delete, get, post, web};
 use async_trait::async_trait;
 use base64::Engine;
 use mudu::common::id::OID;
@@ -514,7 +514,7 @@ async fn find_app(app_mgr: &dyn AppMgr, app_name: &str) -> RS<AppListItem> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use actix_web::{test, App};
+    use actix_web::{App, test};
     #[cfg(target_os = "linux")]
     use mudu::common::app_info::AppInfo;
     #[cfg(target_os = "linux")]

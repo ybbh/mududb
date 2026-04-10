@@ -59,7 +59,7 @@ impl _DeleteKeyValue {
         let deleted = self
             .x_contract
             .delete(
-                self.param.xid,
+                self.param.tx_mgr.clone(),
                 self.param.table_id,
                 &self.param.key,
                 &Predicate::CNF(Vec::new()),

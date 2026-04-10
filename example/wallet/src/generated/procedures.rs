@@ -435,8 +435,8 @@ pub async fn mudu_inner_p2_create_user(
     }
 }
 
-pub fn mudu_argv_desc_create_user(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_argv_desc_create_user()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static ARGV_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -458,8 +458,8 @@ pub fn mudu_argv_desc_create_user(
     })
 }
 
-pub fn mudu_result_desc_create_user(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_result_desc_create_user()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static RESULT_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -555,8 +555,8 @@ pub fn mudu_argv_desc_purchase() -> &'static ::mudu_contract::tuple::tuple_field
     })
 }
 
-pub fn mudu_result_desc_purchase(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_result_desc_purchase()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static RESULT_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -627,8 +627,8 @@ pub async fn mudu_inner_p2_delete_user(
     }
 }
 
-pub fn mudu_argv_desc_delete_user(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_argv_desc_delete_user()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static ARGV_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -642,8 +642,8 @@ pub fn mudu_argv_desc_delete_user(
     })
 }
 
-pub fn mudu_result_desc_delete_user(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_result_desc_delete_user()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static RESULT_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -734,8 +734,8 @@ pub fn mudu_argv_desc_deposit() -> &'static ::mudu_contract::tuple::tuple_field_
     })
 }
 
-pub fn mudu_result_desc_deposit(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_result_desc_deposit()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static RESULT_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -808,8 +808,8 @@ pub async fn mudu_inner_p2_transfer_funds(
     }
 }
 
-pub fn mudu_argv_desc_transfer_funds(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_argv_desc_transfer_funds()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static ARGV_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -831,8 +831,8 @@ pub fn mudu_argv_desc_transfer_funds(
     })
 }
 
-pub fn mudu_result_desc_transfer_funds(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_result_desc_transfer_funds()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static RESULT_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -905,8 +905,8 @@ pub async fn mudu_inner_p2_update_user(
     }
 }
 
-pub fn mudu_argv_desc_update_user(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_argv_desc_update_user()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static ARGV_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -928,8 +928,8 @@ pub fn mudu_argv_desc_update_user(
     })
 }
 
-pub fn mudu_result_desc_update_user(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_result_desc_update_user()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static RESULT_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -1020,8 +1020,8 @@ pub fn mudu_argv_desc_withdraw() -> &'static ::mudu_contract::tuple::tuple_field
     })
 }
 
-pub fn mudu_result_desc_withdraw(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_result_desc_withdraw()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static RESULT_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();
@@ -1117,8 +1117,8 @@ pub fn mudu_argv_desc_transfer() -> &'static ::mudu_contract::tuple::tuple_field
     })
 }
 
-pub fn mudu_result_desc_transfer(
-) -> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
+pub fn mudu_result_desc_transfer()
+-> &'static ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc {
     static RESULT_DESC: std::sync::OnceLock<
         ::mudu_contract::tuple::tuple_field_desc::TupleFieldDesc,
     > = std::sync::OnceLock::new();

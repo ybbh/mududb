@@ -62,7 +62,7 @@ impl _UpdateKeyValue {
         let updated = self
             .x_contract
             .update(
-                self.param.xid,
+                self.param.tx_mgr.clone(),
                 self.param.table_id,
                 &self.param.key,
                 &Predicate::CNF(Vec::new()),

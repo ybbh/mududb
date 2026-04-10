@@ -88,7 +88,12 @@ impl WorkerRingLoop {
                 continue;
             };
             sqe.set_user_data(0);
-            sqe.prep_read_raw(file.as_raw_fd(), buf[offset..].as_mut_ptr(), size - offset, offset as u64);
+            sqe.prep_read_raw(
+                file.as_raw_fd(),
+                buf[offset..].as_mut_ptr(),
+                size - offset,
+                offset as u64,
+            );
             let submitted = self.ring.submit();
             if submitted < 0 {
                 return Err(m_error!(

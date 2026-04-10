@@ -1,6 +1,7 @@
 use crate::contract::cmd_exec::CmdExec;
 use crate::contract::meta_mgr::MetaMgr;
 use crate::x_engine::api::{OptInsert, VecDatum, XContract};
+use crate::x_engine::tx_mgr::TxMgr;
 use async_std::fs::File;
 use async_trait::async_trait;
 use csv_async::StringRecord;
@@ -8,7 +9,6 @@ use futures::StreamExt;
 use mudu::common::buf::Buf;
 use mudu::common::id::OID;
 use mudu::common::result::RS;
-use mudu::common::xid::XID;
 use mudu::error::ec::EC as ER;
 use mudu::m_error;
 use std::sync::Arc;
@@ -20,7 +20,7 @@ pub struct LoadFromFile {
 
 struct _LoadFromFile {
     csv_file: String,
-    xid: XID,
+    tx_mgr: Arc<dyn TxMgr>,
     table_id: OID,
     key_index: Vec<usize>,
     value_index: Vec<usize>,
@@ -32,7 +32,7 @@ struct _LoadFromFile {
 impl LoadFromFile {
     pub fn new(
         csv_file: String,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         key_index: Vec<usize>,
         value_index: Vec<usize>,
@@ -42,7 +42,7 @@ impl LoadFromFile {
         Self {
             inner: Arc::new(Mutex::new(_LoadFromFile::new(
                 csv_file,
-                xid,
+                tx_mgr,
                 table_id,
                 key_index,
                 value_index,
@@ -56,7 +56,7 @@ impl LoadFromFile {
 impl _LoadFromFile {
     fn new(
         csv_file: String,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         key_index: Vec<usize>,
         value_index: Vec<usize>,
@@ -65,7 +65,7 @@ impl _LoadFromFile {
     ) -> Self {
         Self {
             csv_file,
-            xid,
+            tx_mgr,
             table_id,
             key_index,
             value_index,
@@ -115,15 +115,26 @@ impl _LoadFromFile {
                 ));
             }
 
-            let key = Self::build_datum_from_line(&record, &self.key_index, &table_desc, 0)?;
+            let key = Self::build_datum_from_line(
+                &record,
+                &self.key_index,
+                table_desc.key_indices(),
+                &table_desc,
+            )?;
             let value = Self::build_datum_from_line(
                 &record,
                 &self.value_index,
+                table_desc.value_indices(),
                 &table_desc,
-                table_desc.key_info().len(),
             )?;
             self.x_contract
-                .insert(self.xid, self.table_id, &key, &value, &OptInsert::default())
+                .insert(
+                    self.tx_mgr.clone(),
+                    self.table_id,
+                    &key,
+                    &value,
+                    &OptInsert::default(),
+                )
                 .await?;
             rows += 1;
         }
@@ -141,15 +152,16 @@ impl _LoadFromFile {
     fn build_datum_from_line(
         record: &StringRecord,
         csv_index: &[usize],
+        attr_indices: &[usize],
         table_desc: &crate::contract::table_desc::TableDesc,
-        attr_base: usize,
     ) -> RS<VecDatum> {
         let mut datum = Vec::with_capacity(csv_index.len());
         for (position, csv_col) in csv_index.iter().enumerate() {
             let textual = record
                 .get(*csv_col)
                 .ok_or_else(|| m_error!(ER::IndexOutOfRange))?;
-            let field = table_desc.get_attr(attr_base + position);
+            let attr_index = attr_indices[position];
+            let field = table_desc.get_attr(attr_index);
             let dat_type = field.type_desc();
             let dat_id = dat_type.dat_type_id();
             let internal = dat_id.fn_input()(textual, dat_type)
@@ -157,7 +169,7 @@ impl _LoadFromFile {
             let binary: Buf = dat_id.fn_send()(&internal, dat_type)
                 .map_err(|e| m_error!(ER::TypeBaseErr, "converting internal to binary error", e))?
                 .into();
-            datum.push((attr_base + position, binary));
+            datum.push((attr_index, binary));
         }
         Ok(VecDatum::new(datum))
     }

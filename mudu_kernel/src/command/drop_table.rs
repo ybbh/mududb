@@ -40,7 +40,7 @@ impl CmdExec for DropTable {
         task_trace!();
         if let Some(table_id) = self.drop_param.oid {
             self.x_contract
-                .drop_table(self.drop_param.xid, table_id)
+                .drop_table(self.drop_param.tx_mgr.clone(), table_id)
                 .await?;
         }
         Ok(())

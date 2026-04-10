@@ -30,7 +30,7 @@ impl ExprArithmetic {
 
 impl Debug for ExprArithmetic {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "op: ")?;
+        write!(f, "arithmetic op: ")?;
         self.op.fmt(f)?;
         write!(f, "left: ")?;
         self.left.fmt(f)?;

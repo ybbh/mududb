@@ -66,7 +66,7 @@ impl _IndexAccessRange {
         let cursor = self
             .x_contract
             .read_range(
-                param.xid,
+                param.tx_mgr.clone(),
                 param.table_id,
                 &param.pred_key,
                 &param.pred_non_key,

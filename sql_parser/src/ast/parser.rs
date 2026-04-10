@@ -24,6 +24,7 @@ use crate::ast::stmt_select::StmtSelect;
 use crate::ast::stmt_type::{StmtCommand, StmtType};
 use crate::ast::stmt_update::{AssignedValue, Assignment, StmtUpdate};
 use crate::ts_const::{ts_field_name, ts_kind_id};
+use mudu::common::id::AttrIndex;
 use mudu::error::err::MError;
 use mudu::m_error;
 use mudu_binding::universal::uni_dat_type::UniDatType;
@@ -731,8 +732,7 @@ impl SQLParser {
         let mut index = 0;
         let mut f = |name: String| {
             if let Some(n) = map.get_mut(&name) {
-                n.set_primary_key(true);
-                n.set_index(index);
+                n.set_primary_key_index(Some(index));
                 index += 1;
                 Ok(())
             } else {
@@ -756,23 +756,33 @@ impl SQLParser {
         let opt_n = node.child_by_field_name(ts_field_name::DATA_TYPE);
         let n_data_type = rs_option(opt_n, "")?;
         let (dat_type, opt_type_params) = self.visit_data_type(context, n_data_type)?;
-        let mut column_def = ColumnDef::new(column_name, dat_type, opt_type_params, false);
+        let mut column_def = ColumnDef::new(column_name, dat_type, opt_type_params);
         let mut cursor = node.walk();
         let iter = node.children_by_field_name(ts_field_name::COLUMN_CONSTRAINT, &mut cursor);
+        let mut index_map = HashMap::new();
         for n in iter {
-            self.visit_column_constraint(n, &mut column_def)?;
+            self.visit_column_constraint(n, &mut column_def, &mut index_map)?;
         }
 
         stmt.add_column_def(column_def);
 
         Ok(())
     }
-    fn visit_column_constraint(&self, node: Node, column_def: &mut ColumnDef) -> RS<()> {
+    fn visit_column_constraint(
+        &self,
+        node: Node,
+        column_def: &mut ColumnDef,
+        index_map: &mut HashMap<String, AttrIndex>,
+    ) -> RS<()> {
         if node
             .child_by_field_name(ts_field_name::PRIMARY_KEY)
             .is_some()
         {
-            column_def.set_primary_key(true);
+            let next_index = index_map
+                .entry(ts_field_name::PRIMARY_KEY.to_string())
+                .or_insert(0);
+            column_def.set_primary_key_index(Some(*next_index));
+            *next_index += 1;
         }
         Ok(())
     }

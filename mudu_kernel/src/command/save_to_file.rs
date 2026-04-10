@@ -2,12 +2,12 @@ use crate::contract::cmd_exec::CmdExec;
 use crate::contract::meta_mgr::MetaMgr;
 use crate::contract::table_desc::TableDesc;
 use crate::x_engine::api::{OptRead, Predicate, RangeData, VecSelTerm, XContract};
+use crate::x_engine::tx_mgr::TxMgr;
 use async_std::fs::File;
 use async_trait::async_trait;
 use csv_async::AsyncWriter;
 use mudu::common::id::OID;
 use mudu::common::result::RS;
-use mudu::common::xid::XID;
 use mudu::error::ec::EC as ER;
 use mudu::m_error;
 use mudu_contract::tuple::datum_desc::DatumDesc;
@@ -21,7 +21,7 @@ pub struct SaveToFile {
 
 struct _SaveToFile {
     file_path: String,
-    xid: XID,
+    tx_mgr: Arc<dyn TxMgr>,
     table_id: OID,
     key_indexing: Vec<usize>,
     value_indexing: Vec<usize>,
@@ -33,7 +33,7 @@ struct _SaveToFile {
 impl SaveToFile {
     pub fn new(
         file_path: String,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         key_indexing: Vec<usize>,
         value_indexing: Vec<usize>,
@@ -43,7 +43,7 @@ impl SaveToFile {
         Self {
             inner: AMutex::new(_SaveToFile::new(
                 file_path,
-                xid,
+                tx_mgr,
                 table_id,
                 key_indexing,
                 value_indexing,
@@ -77,7 +77,7 @@ impl CmdExec for SaveToFile {
 impl _SaveToFile {
     fn new(
         file_path: String,
-        xid: XID,
+        tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
         key_indexing: Vec<usize>,
         value_indexing: Vec<usize>,
@@ -86,7 +86,7 @@ impl _SaveToFile {
     ) -> Self {
         Self {
             file_path,
-            xid,
+            tx_mgr,
             table_id,
             key_indexing,
             value_indexing,
@@ -114,7 +114,7 @@ impl _SaveToFile {
         let cursor = self
             .x_contract
             .read_range(
-                self.xid,
+                self.tx_mgr.clone(),
                 self.table_id,
                 &RangeData::new(Bound::Unbounded, Bound::Unbounded),
                 &Predicate::CNF(Vec::new()),
@@ -186,12 +186,12 @@ impl _SaveToFile {
     }
 
     fn build_select(table_desc: &TableDesc) -> VecSelTerm {
-        let total = table_desc.key_info().len() + table_desc.value_info().len();
+        let total = table_desc.fields().len();
         VecSelTerm::new((0..total).collect())
     }
 
     fn build_output_desc(table_desc: &TableDesc) -> Vec<DatumDesc> {
-        let total = table_desc.key_info().len() + table_desc.value_info().len();
+        let total = table_desc.fields().len();
         (0..total)
             .map(|attr| {
                 let field = table_desc.get_attr(attr);
@@ -201,7 +201,7 @@ impl _SaveToFile {
     }
 
     fn build_header(table_desc: &TableDesc) -> Vec<String> {
-        let total = table_desc.key_info().len() + table_desc.value_info().len();
+        let total = table_desc.fields().len();
         (0..total)
             .map(|attr| table_desc.get_attr(attr).name().clone())
             .collect()

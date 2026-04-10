@@ -34,6 +34,8 @@ enum ValueKind {
     F64(f64),
     I32(i32),
     I64(i64),
+    I128(i128),
+    U128(u128),
     String(String),
     Record(Vec<DatValue>),
     Array(Vec<DatValue>),
@@ -186,6 +188,14 @@ impl DatValue {
     pub fn to_i64(&self) -> i64 {
         self.expect_i64().clone()
     }
+
+    pub fn to_i128(&self) -> i128 {
+        self.expect_i128().clone()
+    }
+
+    pub fn to_oid(&self) -> u128 {
+        self.expect_u128().clone()
+    }
 }
 
 /// Safe wrapper for unsafe pointer casting between types
@@ -210,6 +220,8 @@ unsafe impl Sync for ValueKind {}
 impl_dat_value_methods! {
     (i32, I32, i32),
     (i64, I64, i64),
+    (i128, I128, i128),
+    (u128, U128, u128),
     (f32, F32, f32),
     (f64, F64, f64),
     (String, String, string),

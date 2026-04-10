@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::UnsafeCell;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -12,7 +12,8 @@ use crate::io::socket::{complete_socket_io, submit_socket_io, SocketInflightOp, 
 use crate::server::task_registry::WorkerTaskRegistry;
 
 thread_local! {
-    static CURRENT_WORKER_RING: RefCell<Option<Arc<WorkerLocalRing>>> = const { RefCell::new(None) };
+    static CURRENT_WORKER_RING: UnsafeCell<Option<Arc<WorkerLocalRing>>> =
+        const { UnsafeCell::new(None) };
 }
 
 pub(crate) enum WorkerRingOp {
@@ -45,6 +46,7 @@ impl WorkerLocalRing {
     pub fn worker_task_registry(&self) -> &WorkerTaskRegistry {
         &self.worker_tasks
     }
+
     pub(crate) fn register(&self, op: WorkerRingOp) -> RS<u64> {
         let op_id = self.next_op_id.fetch_add(1, Ordering::Relaxed);
         self.ops
@@ -96,18 +98,27 @@ impl WorkerLocalRing {
 
 pub(crate) fn set_current_worker_ring(ring: Arc<WorkerLocalRing>) {
     CURRENT_WORKER_RING.with(|slot| {
-        *slot.borrow_mut() = Some(ring);
+        // Safety: this slot is thread-local and only accessed through these helpers.
+        unsafe {
+            *slot.get() = Some(ring);
+        }
     });
 }
 
 pub(crate) fn unset_current_worker_ring() {
     CURRENT_WORKER_RING.with(|slot| {
-        *slot.borrow_mut() = None;
+        // Safety: this slot is thread-local and only accessed through these helpers.
+        unsafe {
+            *slot.get() = None;
+        }
     });
 }
 
 pub(crate) fn has_current_worker_ring() -> bool {
-    CURRENT_WORKER_RING.with(|slot| slot.borrow().is_some())
+    CURRENT_WORKER_RING.with(|slot| {
+        // Safety: shared reads are confined to the current thread-local slot.
+        unsafe { (*slot.get()).is_some() }
+    })
 }
 
 pub(crate) fn with_current_ring<F, R>(f: F) -> RS<R>
@@ -115,7 +126,8 @@ where
     F: FnOnce(&Arc<WorkerLocalRing>) -> RS<R>,
 {
     CURRENT_WORKER_RING.with(|slot| {
-        let ring = slot.borrow();
+        // Safety: shared reads are confined to the current thread-local slot.
+        let ring = unsafe { &*slot.get() };
         let ring = ring
             .as_ref()
             .ok_or_else(|| m_error!(EC::NoSuchElement, "current worker ring is not set"))?;

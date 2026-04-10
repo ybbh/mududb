@@ -79,7 +79,7 @@ impl _InsertKeyValue {
         task_trace!();
         self.x_contract
             .insert(
-                self.param.xid,
+                self.param.tx_mgr.clone(),
                 self.param.table_id,
                 &self.param.key,
                 &self.param.value,

@@ -78,3 +78,17 @@ impl Operator {
         }
     }
 }
+
+
+impl ValueCompare {
+    pub fn revert_cmp_op(op: ValueCompare) -> ValueCompare {
+        match op {
+            ValueCompare::EQ => ValueCompare::EQ,
+            ValueCompare::LE => ValueCompare::GT,
+            ValueCompare::LT => ValueCompare::GE,
+            ValueCompare::GE => ValueCompare::LT,
+            ValueCompare::GT => ValueCompare::LE,
+            ValueCompare::NE => ValueCompare::NE,
+        }
+    }
+}

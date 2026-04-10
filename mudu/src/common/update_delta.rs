@@ -1,5 +1,4 @@
-use crate::common::bc_dec::{DecErr, Decode, Decoder};
-use crate::common::bc_enc::{EncErr, Encode, Encoder};
+use crate::common::codec::{DecErr, Decode, Decoder, EncErr, Encode, Encoder};
 use crate::common::buf::Buf;
 #[cfg(any(test, feature = "test"))]
 use arbitrary::{Arbitrary, Unstructured};

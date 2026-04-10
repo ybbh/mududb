@@ -1,4 +1,3 @@
-#[allow(unused)]
 #[cfg(test)]
 mod tests {
     use crate::service::runtime::Runtime;
@@ -24,18 +23,13 @@ mod tests {
         ProcSysCall,
         ProvSysCallAsync,
     }
-    ///
-    /// See proc function definition [proc](mudu_wasm/src/wasm/proc.rs#L5)。
-    ///
-    //#[test]
+
+    #[allow(dead_code)]
     fn test_proc() {
         test_runtime_simple(TestProc::Proc)
     }
 
-    ///
-    /// See proc_sys_call function definition [proc_sys_call](mudu_wasm/src/wasm/proc2.rs#L11)。
-    ///
-    //#[test]
+    #[allow(dead_code)]
     fn test_proc_syscall() {
         test_runtime_simple(TestProc::ProcSysCall)
     }
@@ -44,6 +38,7 @@ mod tests {
     fn test_async() {
         test_runtime_simple(TestProc::ProvSysCallAsync)
     }
+
     fn test_runtime_simple(test_kind: TestProc) {
         log_setup_ex("debug", "", false);
         tokio::runtime::Builder::new_multi_thread()
@@ -51,7 +46,7 @@ mod tests {
             .build()
             .unwrap()
             .block_on(async {
-                let r = test_async_runtime_simple(true, test_kind).await;
+                let r = test_async_runtime_simple(test_kind).await;
                 println!("{:?}", r);
             });
     }
@@ -62,7 +57,7 @@ mod tests {
         path.to_str().unwrap().to_string()
     }
 
-    async fn test_async_runtime_simple(_enable_component: bool, test_kind: TestProc) -> RS<()> {
+    async fn test_async_runtime_simple(test_kind: TestProc) -> RS<()> {
         let pkg_path = wasm_mod_path();
         let db_path = db_path();
         let enable_async =
@@ -113,8 +108,7 @@ mod tests {
         let proc_result = app
             .invoke(id, &"mod_0".to_string(), &"proc".to_string(), param, None)
             .await?;
-        let result = proc_result.to::<(i32, String)>(&<(i32, String)>::tuple_desc_static(&[]))?;
-        println!("result: {:?}", result);
+        let _result = proc_result.to::<(i32, String)>(&<(i32, String)>::tuple_desc_static(&[]))?;
         app.task_end(id)?;
         Ok(())
     }
@@ -139,13 +133,12 @@ mod tests {
                 None,
             )
             .await?;
-        let result = proc_result.to::<(i32, String)>(&<(i32, String)>::tuple_desc_static(&[]))?;
-        println!("result: {:?}", result);
+        let _result = proc_result.to::<(i32, String)>(&<(i32, String)>::tuple_desc_static(&[]))?;
         app.task_end(id)?;
         Ok(())
     }
 
-    #[allow(unused)]
+    #[allow(dead_code)]
     async fn async_session_sys_call(service: Arc<dyn Runtime>) -> RS<()> {
         println!("task id {}", this_task_id());
         let tuple = (1i32, 100i64, "string argument".to_string());
@@ -166,8 +159,7 @@ mod tests {
                 None,
             )
             .await?;
-        let result = proc_result.to::<(i32, String)>(&<(i32, String)>::tuple_desc_static(&[]))?;
-        println!("result: {:?}", result);
+        let _result = proc_result.to::<(i32, String)>(&<(i32, String)>::tuple_desc_static(&[]))?;
         app.task_end(id)?;
         Ok(())
     }

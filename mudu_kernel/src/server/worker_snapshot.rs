@@ -2,6 +2,8 @@ use crate::contract::snapshot::{RunningXList, Snapshot};
 use mudu::common::result::RS;
 use mudu::error::ec::EC;
 use mudu::m_error;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KvItem {
@@ -15,10 +17,9 @@ pub struct WorkerSnapshot {
     running: Vec<u64>,
 }
 
-#[derive(Default)]
 pub struct WorkerSnapshotMgr {
-    next_ts: u64,
-    running: Vec<u64>,
+    next_ts: AtomicU64,
+    running: Mutex<Vec<u64>>,
 }
 
 impl WorkerSnapshot {
@@ -40,38 +41,51 @@ impl WorkerSnapshot {
 }
 
 impl WorkerSnapshotMgr {
-    pub fn begin_tx(&mut self) -> WorkerSnapshot {
-        self.next_ts += 1;
-        let xid = self.next_ts;
+    pub fn begin_tx(&self) -> WorkerSnapshot {
+        let xid = self.next_ts.fetch_add(1, Ordering::Relaxed) + 1;
+        let mut running = self
+            .running
+            .lock()
+            .expect("worker snapshot manager running list lock poisoned");
         let snapshot = WorkerSnapshot {
             xid,
-            running: self.running.clone(),
+            running: running.clone(),
         };
-        insert_sorted_unique(&mut self.running, xid);
+        insert_sorted_unique(&mut running, xid);
         snapshot
     }
 
-    pub fn alloc_committed_ts(&mut self) -> u64 {
-        self.next_ts += 1;
-        self.next_ts
+    pub fn alloc_committed_ts(&self) -> u64 {
+        self.next_ts.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    pub fn observe_committed_ts(&mut self, xid: u64) {
-        if self.next_ts < xid {
-            self.next_ts = xid;
-        }
+    pub fn observe_committed_ts(&self, xid: u64) {
+        self.next_ts.fetch_max(xid, Ordering::Relaxed);
     }
 
-    pub fn end_tx(&mut self, xid: u64) -> RS<()> {
-        match self.running.binary_search(&xid) {
+    pub fn end_tx(&self, xid: u64) -> RS<()> {
+        let mut running = self
+            .running
+            .lock()
+            .expect("worker snapshot manager running list lock poisoned");
+        match running.binary_search(&xid) {
             Ok(index) => {
-                self.running.remove(index);
+                running.remove(index);
                 Ok(())
             }
             Err(_) => Err(m_error!(
                 EC::NoSuchElement,
                 format!("transaction {} is not active", xid)
             )),
+        }
+    }
+}
+
+impl Default for WorkerSnapshotMgr {
+    fn default() -> Self {
+        Self {
+            next_ts: AtomicU64::new(0),
+            running: Mutex::new(Vec::new()),
         }
     }
 }

@@ -1,4 +1,3 @@
-use crate::backend::mudu_conn_core::query_exec_to_rows;
 use async_trait::async_trait;
 use mudu::common::result::RS;
 use mudu_contract::database::result_set::ResultSetAsync;
@@ -6,6 +5,8 @@ use mudu_contract::tuple::tuple_field_desc::TupleFieldDesc;
 use mudu_contract::tuple::tuple_value::TupleValue;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+use crate::contract::query_exec::QueryExec;
 
 pub struct MuduResultSetAsync {
     desc: Arc<TupleFieldDesc>,
@@ -18,14 +19,16 @@ struct ResultRows {
 }
 
 impl MuduResultSetAsync {
-    pub async fn from_query_exec(
-        exec: Arc<dyn mudu_kernel::contract::query_exec::QueryExec>,
-    ) -> RS<Self> {
-        let (rows, desc) = query_exec_to_rows(exec).await?;
-        Ok(Self {
+    pub fn from_rows(rows: Vec<TupleValue>, desc: TupleFieldDesc) -> Self {
+        Self {
             desc: Arc::new(desc),
             inner: Mutex::new(ResultRows { rows, index: 0 }),
-        })
+        }
+    }
+
+    pub async fn from_query_exec(exec: Arc<dyn QueryExec>) -> RS<Self> {
+        let (rows, desc) = super::mudu_conn_core::query_exec_to_rows(exec).await?;
+        Ok(Self::from_rows(rows, desc))
     }
 }
 

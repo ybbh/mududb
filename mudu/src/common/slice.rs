@@ -1,5 +1,4 @@
-use crate::common::bc_dec::{DecErr, Decoder};
-use crate::common::bc_enc::{EncErr, Encoder};
+use crate::common::codec::{DecErr, Decoder, EncErr, Encoder};
 pub struct SliceRef<'r> {
     s: &'r [u8],
     read_pos: usize,

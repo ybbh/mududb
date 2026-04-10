@@ -16,3 +16,9 @@ pub use crate::wal::xl_batch_worker_log::{
     deserialize_batch, new_xl_batch_worker_log, new_xl_batch_writer, serialize_batch,
     NoopXLBatchRecoveryHandler, XLBatchWorkerLog,
 };
+
+#[allow(unused)]
+pub mod _fuzz {
+    #[allow(dead_code)]
+    pub fn _de_en_x_l_batch(_data: &[u8]) {}
+}

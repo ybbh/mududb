@@ -84,7 +84,7 @@ impl _InnerCreateTable {
     async fn run(&mut self) -> RS<()> {
         task_trace!();
         self.x_contract
-            .create_table(self.param.xid, &self.param.schema)
+            .create_table(self.param.tx_mgr.clone(), &self.param.schema)
             .await
     }
 }

@@ -15,4 +15,8 @@ pub trait MetaMgr: Send + Sync {
     async fn create_table(&self, schema: &SchemaTable) -> RS<()>;
 
     async fn drop_table(&self, table_id: OID) -> RS<()>;
+
+    async fn list_schemas(&self) -> RS<Vec<SchemaTable>> {
+        Ok(Vec::new())
+    }
 }

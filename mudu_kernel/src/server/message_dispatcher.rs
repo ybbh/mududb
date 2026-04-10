@@ -6,8 +6,8 @@ use mudu_contract::protocol::{Frame, MessageType};
 
 use crate::server::async_func_task::HandleResult;
 use crate::server::handlers::{
-    GetHandler, ProcedureInvokeHandler, PutHandler, RangeScanHandler, SessionCloseHandler,
-    SessionCreateHandler,
+    BatchHandler, ExecuteHandler, GetHandler, ProcedureInvokeHandler, PutHandler, QueryHandler,
+    RangeScanHandler, SessionCloseHandler, SessionCreateHandler,
 };
 use crate::server::request_ctx::RequestCtx;
 
@@ -29,6 +29,9 @@ impl MessageDispatcher {
 
     fn new() -> Self {
         let mut handlers: Vec<(MessageType, Box<dyn MessageHandler>)> = Vec::new();
+        register(&mut handlers, Box::new(QueryHandler));
+        register(&mut handlers, Box::new(ExecuteHandler));
+        register(&mut handlers, Box::new(BatchHandler));
         register(&mut handlers, Box::new(GetHandler));
         register(&mut handlers, Box::new(PutHandler));
         register(&mut handlers, Box::new(RangeScanHandler));

@@ -10,13 +10,12 @@ pub struct TableDesc {
     key_oid: Vec<OID>,
     value_oid: Vec<OID>,
 
-    // use AttrIndex index to access key/value
-    // [0     -- N ] , key datum, if 0 <= AttrIndex < N, this index would be  key
-    // [N + 1 -- M ] , value datum, if N <= AttrIndex < M, this index would be value
+    // AttrIndex is the column order in the original table definition.
     key_desc: TupleDesc,
     value_desc: TupleDesc,
-    key_info: Vec<FieldInfo>,
-    value_info: Vec<FieldInfo>,
+    fields: Vec<FieldInfo>,
+    key_indices: Vec<AttrIndex>,
+    value_indices: Vec<AttrIndex>,
     name2oid: HashMap<String, OID>,
     oid2col: HashMap<OID, FieldInfo>,
     column_oid: Vec<OID>,
@@ -28,25 +27,15 @@ impl TableDesc {
         oid: OID,
         key_oid: Vec<OID>,
         value_oid: Vec<OID>,
+        key_indices: Vec<AttrIndex>,
+        value_indices: Vec<AttrIndex>,
+        fields: Vec<FieldInfo>,
         key_desc: TupleDesc,
         value_desc: TupleDesc,
         name2oid: HashMap<String, OID>,
         oid2col: HashMap<OID, FieldInfo>,
     ) -> Self {
-        let mut vec: Vec<(&OID, &FieldInfo)> = oid2col.iter().collect();
-        vec.sort_by(|a, b| a.1.column_index().cmp(&b.1.column_index()));
-        let column_oid: Vec<OID> = vec.iter().map(|(id, _)| *(*id)).collect();
-        let mut key_info: Vec<_> = Vec::new();
-        let mut value_info: Vec<_> = Vec::new();
-        key_info.resize(key_desc.field_count(), FieldInfo::default());
-        value_info.resize(value_desc.field_count(), FieldInfo::default());
-        for (_oid, field) in oid2col.iter() {
-            if field.is_primary() {
-                key_info[field.column_index()] = field.clone();
-            } else {
-                value_info[field.column_index()] = field.clone();
-            }
-        }
+        let column_oid = fields.iter().map(|field| field.id()).collect();
         Self {
             name,
             oid,
@@ -54,8 +43,9 @@ impl TableDesc {
             value_oid,
             key_desc,
             value_desc,
-            key_info,
-            value_info,
+            fields,
+            key_indices,
+            value_indices,
             oid2col,
             name2oid,
             column_oid,
@@ -70,22 +60,39 @@ impl TableDesc {
         &self.value_oid
     }
 
+    // AttrIndex always refers to the original table column order.
+    // Use FieldInfo.datum_index() to locate the field inside the key/value tuple.
     pub fn get_attr(&self, index: AttrIndex) -> &FieldInfo {
-        if index < self.key_info.len() {
-            &self.key_info[index]
-        } else {
-            &self.value_info[index - self.key_info.len()]
-        }
+        &self.fields[index]
     }
-    pub fn key_info(&self) -> &Vec<FieldInfo> {
-        &self.key_info
+
+    pub fn fields(&self) -> &Vec<FieldInfo> {
+        &self.fields
+    }
+
+    pub fn key_indices(&self) -> &Vec<AttrIndex> {
+        &self.key_indices
+    }
+
+    pub fn value_indices(&self) -> &Vec<AttrIndex> {
+        &self.value_indices
+    }
+
+    pub fn key_info(&self) -> Vec<&FieldInfo> {
+        self.key_indices
+            .iter()
+            .map(|index| &self.fields[*index])
+            .collect()
     }
     pub fn key_desc(&self) -> &TupleDesc {
         &self.key_desc
     }
 
-    pub fn value_info(&self) -> &Vec<FieldInfo> {
-        &self.value_info
+    pub fn value_info(&self) -> Vec<&FieldInfo> {
+        self.value_indices
+            .iter()
+            .map(|index| &self.fields[*index])
+            .collect()
     }
     pub fn value_desc(&self) -> &TupleDesc {
         &self.value_desc

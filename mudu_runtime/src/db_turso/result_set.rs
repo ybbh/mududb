@@ -122,6 +122,24 @@ fn turso_db_row_to_tuple_item(row: Row, item_desc: &[DatumDesc]) -> RS<TupleValu
                 })?;
                 DatValue::from_i64(val)
             }
+            DatTypeID::U128 => {
+                let val = row.get::<String>(n).map_err(|e| {
+                    m_error!(EC::DBInternalError, "turso db get item of row error", e)
+                })?;
+                let val = val
+                    .parse::<u128>()
+                    .map_err(|e| m_error!(EC::DBInternalError, "turso db oid parse error", e))?;
+                DatValue::from_u128(val)
+            }
+            DatTypeID::I128 => {
+                let val = row.get::<String>(n).map_err(|e| {
+                    m_error!(EC::DBInternalError, "turso db get item of row error", e)
+                })?;
+                let val = val
+                    .parse::<i128>()
+                    .map_err(|e| m_error!(EC::DBInternalError, "turso db i128 parse error", e))?;
+                DatValue::from_i128(val)
+            }
             DatTypeID::F32 => {
                 let val = row.get::<f64>(n).map_err(|e| {
                     m_error!(EC::DBInternalError, "turso db get item of row error", e)

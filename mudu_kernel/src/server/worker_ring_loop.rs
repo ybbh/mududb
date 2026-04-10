@@ -13,8 +13,10 @@ use crate::server::loop_user_io::{
 };
 use crate::server::server_iouring;
 use crate::server::server_iouring::RecoveryCoordinator;
+use crate::server::session_bound_worker_runtime::{as_worker_local_ref, new_session_bound_worker_runtime};
 use crate::server::worker::IoUringWorker;
 use crate::server::worker_loop_stats::WorkerLoopStats;
+use crate::server::worker_local::{set_current_worker_local, unset_current_worker_local};
 use crate::server::worker_mailbox::WorkerMailboxMsg;
 use crate::server::worker_task::{spawn_system_worker_task, WorkerTaskFuture};
 use crate::wal::worker_log::ChunkedWorkerLogBackend;
@@ -138,15 +140,21 @@ impl WorkerRingLoop {
     /// The worker-local ring pointer is installed for the duration of the run
     /// so user-level async file I/O can enqueue requests onto this loop.
     pub(in crate::server) fn run(&mut self) -> RS<WorkerLoopStats> {
+        set_current_worker_local(as_worker_local_ref(new_session_bound_worker_runtime(
+            self.worker.clone(),
+            0,
+        )));
         set_current_worker_ring(self.worker_local_ring.clone());
         if let Err(err) = self.recover_worker_log() {
             unset_current_worker_ring();
+            unset_current_worker_local();
             self.recovery_coordinator.worker_failed();
             return Err(err);
         }
         self.recovery_coordinator.worker_succeeded()?;
         let r = self.run_service_loop();
         unset_current_worker_ring();
+        unset_current_worker_local();
         r
     }
 
@@ -489,10 +497,7 @@ mod tests {
                 continue;
             }
             let cqe = loop_state.ring.wait().map_err(|wait_rc| {
-                m_error!(
-                    EC::NetErr,
-                    format!("io_uring_wait_cqe error {}", wait_rc)
-                )
+                m_error!(EC::NetErr, format!("io_uring_wait_cqe error {}", wait_rc))
             })?;
             loop_state.process_cqe(cqe)?;
             yield_now().await;

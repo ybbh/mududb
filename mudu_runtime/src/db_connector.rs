@@ -8,7 +8,9 @@ use mudu::error::ec::EC;
 use mudu::m_error;
 use mudu_contract::database::db_conn::DBConnSync;
 use mudu_contract::database::sql::DBConn;
+use mudu_kernel::mudu_conn::mudu_conn_async::MuduConnAsync;
 use std::str::FromStr;
+use std::sync::Arc;
 use strum_macros::EnumString;
 
 pub struct DBConnector {}
@@ -19,6 +21,7 @@ enum DBType {
     LibSQL,
     Turso,
     LibSQLAsync,
+    Mudu,
 }
 
 impl DBConnector {
@@ -64,6 +67,7 @@ impl DBConnector {
                 DBType::LibSQL => create_ls_conn(&db_path, &app_name, &ddl_path),
                 DBType::Turso => create_turso_conn(&db_path, &app_name).await,
                 DBType::LibSQLAsync => create_libsql_async_conn(&db_path, &app_name).await,
+                DBType::Mudu => create_mudu_conn().await,
             },
             None => Err(m_error!(EC::ParseErr, "not a valid DB type")),
         }
@@ -72,6 +76,10 @@ impl DBConnector {
     pub fn get_libsql_conn(db_conn: &dyn DBConnSync) -> Option<Connection> {
         db_conn_get_libsql_connection(db_conn)
     }
+}
+
+async fn create_mudu_conn() -> RS<DBConn> {
+    Ok(DBConn::Async(Arc::new(MuduConnAsync::new())))
 }
 
 fn parse_key_value(s: &str) -> RS<(String, String)> {

@@ -193,11 +193,7 @@ impl SocketOpenRequest {
 }
 
 impl SocketConnectRequest {
-    fn new(
-        fd: RawFd,
-        addr: mudu_sys::uring::SockAddrBuf,
-        state: Arc<OpState<()>>,
-    ) -> Self {
+    fn new(fd: RawFd, addr: mudu_sys::uring::SockAddrBuf, state: Arc<OpState<()>>) -> Self {
         Self { fd, addr, state }
     }
 
@@ -836,7 +832,12 @@ pub(crate) fn submit_socket_io(
 ) -> SocketInflightOp {
     match request {
         SocketIoRequest::Socket(request) => {
-            sqe.prep_socket(request.domain(), request.socket_type(), request.protocol(), 0);
+            sqe.prep_socket(
+                request.domain(),
+                request.socket_type(),
+                request.protocol(),
+                0,
+            );
             SocketInflightOp::Open(Box::new(request))
         }
         SocketIoRequest::Connect(request) => {
@@ -849,7 +850,12 @@ pub(crate) fn submit_socket_io(
             SocketInflightOp::Accept(request)
         }
         SocketIoRequest::Recv(request) => {
-            sqe.prep_recv_raw(request.fd(), request.buf_ptr().cast(), request.len(), request.flags());
+            sqe.prep_recv_raw(
+                request.fd(),
+                request.buf_ptr().cast(),
+                request.len(),
+                request.flags(),
+            );
             SocketInflightOp::Recv(Box::new(request))
         }
         SocketIoRequest::Send(request) => {
