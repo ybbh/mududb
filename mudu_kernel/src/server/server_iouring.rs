@@ -14,7 +14,6 @@ use std::os::fd::{IntoRawFd, RawFd};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use tracing::debug;
-
 pub(crate) struct RecoveryCoordinator {
     total_workers: usize,
     state: Mutex<RecoveryState>,
@@ -69,7 +68,6 @@ pub(crate) fn sync_serve_iouring(mut cfg: IoUringTcpServerConfig, stop: Waiter) 
             mailbox.push(WorkerMailboxMsg::Shutdown);
             notify_mailbox_fd(fd)?;
         }
-        debug!("notify shutdown");
         Ok(())
     })?;
 
@@ -317,7 +315,7 @@ mod tests {
                 ConnectionTransfer::new(
                     11,
                     1,
-                    crate::server::fsm::ConnectionState::Accepted,
+                    crate::server::connection_state::ConnectionState::Accepted,
                     "127.0.0.1:9527".parse().unwrap(),
                 ),
                 -1,

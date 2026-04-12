@@ -2,8 +2,11 @@ pub mod api;
 pub mod env;
 pub mod fd;
 pub mod fs;
+#[cfg(target_os = "linux")]
 pub mod linux;
 pub mod net;
+#[cfg(not(target_os = "linux"))]
+mod portable;
 pub mod sync;
 pub mod task;
 #[cfg(target_os = "linux")]

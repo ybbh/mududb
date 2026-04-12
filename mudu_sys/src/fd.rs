@@ -2,4 +2,4 @@
 pub type RawFd = std::os::fd::RawFd;
 
 #[cfg(not(unix))]
-pub type RawFd = libc::c_int;
+pub type RawFd = i32;

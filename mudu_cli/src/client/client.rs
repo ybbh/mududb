@@ -6,10 +6,10 @@ use mudu_contract::protocol::{
     PutRequest, RangeScanRequest, ServerResponse, SessionCloseRequest, SessionCreateRequest,
     decode_error_response, decode_get_response, decode_procedure_invoke_response,
     decode_put_response, decode_range_scan_response, decode_server_response,
-    decode_session_close_response, decode_session_create_response, encode_batch_request, encode_client_request,
-    encode_client_request_with_message_type, encode_get_request, encode_procedure_invoke_request,
-    encode_put_request, encode_range_scan_request, encode_session_close_request,
-    encode_session_create_request,
+    decode_session_close_response, decode_session_create_response, encode_batch_request,
+    encode_client_request, encode_client_request_with_message_type, encode_get_request,
+    encode_procedure_invoke_request, encode_put_request, encode_range_scan_request,
+    encode_session_close_request, encode_session_create_request,
 };
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};

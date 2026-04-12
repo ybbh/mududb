@@ -5,12 +5,11 @@ use mudu::m_error;
 use mudu_contract::database::result_set::ResultSetAsync;
 use mudu_contract::protocol::{
     encode_get_response, encode_procedure_invoke_response, encode_put_response,
-    encode_range_scan_response, encode_session_close_response, encode_session_create_response,
-    encode_server_response, GetResponse, KeyValue, ProcedureInvokeResponse, PutResponse,
-    RangeScanResponse, ServerResponse,
-    SessionCloseResponse, SessionCreateResponse,
+    encode_range_scan_response, encode_server_response, encode_session_close_response,
+    encode_session_create_response, GetResponse, KeyValue, ProcedureInvokeResponse, PutResponse,
+    RangeScanResponse, ServerResponse, SessionCloseResponse, SessionCreateResponse,
 };
-use mudu_type::datum::DatumDyn;
+use mudu_contract::tuple::tuple_field_desc::TupleFieldDesc;
 use std::sync::Arc;
 
 use crate::server::async_func_task::HandleResult;
@@ -151,7 +150,7 @@ impl RequestCtx {
             .worker
             .execute(oid, Box::new(sql.to_string()), Box::new(()))
             .await?;
-        let response = ServerResponse::new(Vec::new(), Vec::new(), affected_rows, None);
+        let response = ServerResponse::new(TupleFieldDesc::new(Vec::new()), Vec::new(), affected_rows, None);
         self.encode_server_response(response)
     }
 
@@ -166,7 +165,7 @@ impl RequestCtx {
             .worker
             .batch(oid, Box::new(sql.to_string()), Box::new(()))
             .await?;
-        let response = ServerResponse::new(Vec::new(), Vec::new(), affected_rows, None);
+        let response = ServerResponse::new(TupleFieldDesc::new(Vec::new()), Vec::new(), affected_rows, None);
         self.encode_server_response(response)
     }
 
@@ -214,23 +213,14 @@ impl RequestCtx {
     }
 
     async fn query_response(result_set: Arc<dyn ResultSetAsync>) -> RS<ServerResponse> {
-        let desc = result_set.desc();
-        let columns = desc
-            .fields()
-            .iter()
-            .map(|field| field.name().to_string())
-            .collect();
+        let desc = result_set.desc().clone();
         let mut rows = Vec::new();
         while let Some(row) = result_set.next().await? {
             if row.values().len() != desc.fields().len() {
                 return Err(m_error!(EC::FatalError, "non consistent column number"));
             }
-            let mut values = Vec::with_capacity(row.values().len());
-            for (value, field_desc) in row.values().iter().zip(desc.fields().iter()) {
-                values.push(value.to_textual(field_desc.dat_type())?.into());
-            }
-            rows.push(values);
+            rows.push(row);
         }
-        Ok(ServerResponse::new(columns, rows, 0, None))
+        Ok(ServerResponse::new(desc, rows, 0, None))
     }
 }

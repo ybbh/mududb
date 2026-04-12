@@ -39,6 +39,7 @@ mod tests {
         let mut runtime = WTRuntimeComponent::build(&RuntimeOpt {
             component_target: ComponentTarget::P3,
             enable_async: false,
+            sever_mode: Default::default(),
         })
         .unwrap();
 

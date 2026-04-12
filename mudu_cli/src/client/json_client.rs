@@ -8,7 +8,10 @@ use mudu_binding::universal::uni_oid::UniOid;
 use mudu_binding::universal::uni_primitive_value::UniPrimitiveValue;
 use mudu_contract::protocol::{
     ClientRequest, GetRequest, KeyValue, ProcedureInvokeRequest, PutRequest, RangeScanRequest,
+    ServerResponse,
 };
+use mudu_type::dat_type_id::DatTypeID;
+use mudu_type::datum::DatumDyn;
 use serde::Deserialize;
 use serde::de::{self, Deserializer};
 use serde_json::{Value, json};
@@ -46,8 +49,7 @@ where
         } else {
             self.inner.query(client_request).await?
         };
-        serde_json::to_value(response)
-            .map_err(|e| m_error!(EC::EncodeErr, "encode json command response error", e))
+        server_response_to_json(&response)
     }
 
     pub async fn put(&mut self, request: Value) -> RS<Value> {
@@ -302,6 +304,44 @@ fn key_value_to_json(key_value: KeyValue) -> RS<Value> {
     }))
 }
 
+fn server_response_to_json(response: &ServerResponse) -> RS<Value> {
+    let columns = response
+        .row_desc()
+        .fields()
+        .iter()
+        .map(|field| Value::String(field.name().to_string()))
+        .collect::<Vec<_>>();
+
+    let rows = response
+        .rows()
+        .iter()
+        .map(|row| {
+            let values = row
+                .values()
+                .iter()
+                .zip(response.row_desc().fields().iter())
+                .map(|(value, field_desc)| {
+                    if field_desc.dat_type().dat_type_id() == DatTypeID::String {
+                        Ok(Value::String(value.expect_string().clone()))
+                    } else {
+                        value
+                            .to_textual(field_desc.dat_type())
+                            .map(|text| Value::String(text.into()))
+                    }
+                })
+                .collect::<RS<Vec<_>>>()?;
+            Ok(Value::Array(values))
+        })
+        .collect::<RS<Vec<_>>>()?;
+
+    Ok(json!({
+        "columns": columns,
+        "rows": rows,
+        "affected_rows": response.affected_rows(),
+        "error": response.error(),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,6 +352,12 @@ mod tests {
         ServerResponse, SessionCloseRequest, SessionCloseResponse, SessionCreateRequest,
         SessionCreateResponse,
     };
+    use mudu_contract::tuple::datum_desc::DatumDesc;
+    use mudu_contract::tuple::tuple_field_desc::TupleFieldDesc;
+    use mudu_contract::tuple::tuple_value::TupleValue;
+    use mudu_type::dat_type::DatType;
+    use mudu_type::dat_type_id::DatTypeID;
+    use mudu_type::dat_value::DatValue;
 
     struct MockAsyncIoUringTcpClient {
         last_query: Option<ClientRequest>,
@@ -342,8 +388,11 @@ mod tests {
         async fn query(&mut self, request: ClientRequest) -> RS<ServerResponse> {
             self.last_query = Some(request);
             Ok(ServerResponse::new(
-                vec!["value".to_string()],
-                vec![vec!["1".to_string()]],
+                TupleFieldDesc::new(vec![DatumDesc::new(
+                    "value".to_string(),
+                    DatType::default_for(DatTypeID::String),
+                )]),
+                vec![TupleValue::from(vec![DatValue::from_string("1".to_string())])],
                 0,
                 None,
             ))
@@ -351,12 +400,12 @@ mod tests {
 
         async fn execute(&mut self, request: ClientRequest) -> RS<ServerResponse> {
             self.last_execute = Some(request);
-            Ok(ServerResponse::new(vec![], vec![], 2, None))
+            Ok(ServerResponse::new(TupleFieldDesc::new(vec![]), vec![], 2, None))
         }
 
         async fn batch(&mut self, request: ClientRequest) -> RS<ServerResponse> {
             self.last_batch = Some(request);
-            Ok(ServerResponse::new(vec![], vec![], 3, None))
+            Ok(ServerResponse::new(TupleFieldDesc::new(vec![]), vec![], 3, None))
         }
 
         async fn get(&mut self, request: GetRequest) -> RS<GetResponse> {

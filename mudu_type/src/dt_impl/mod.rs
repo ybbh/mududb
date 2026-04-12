@@ -36,3 +36,18 @@ mod fn_object_param;
 mod fn_string_arb;
 #[cfg(any(test, feature = "test"))]
 mod fn_u128_arb;
+
+#[cfg(test)]
+mod generic_prop_test;
+
+#[cfg(test)]
+mod object_array_test;
+
+#[cfg(test)]
+mod param_test;
+
+#[cfg(test)]
+mod compare_test;
+
+#[cfg(test)]
+mod error_test;

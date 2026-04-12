@@ -69,6 +69,7 @@ mod tests {
             RuntimeOpt {
                 component_target: crate::service::runtime_opt::ComponentTarget::P2,
                 enable_async,
+                sever_mode: Default::default(),
             },
         )
         .await?;

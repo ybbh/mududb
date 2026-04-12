@@ -85,6 +85,10 @@ impl _InnerCreateTable {
         task_trace!();
         self.x_contract
             .create_table(self.param.tx_mgr.clone(), &self.param.schema)
-            .await
+            .await?;
+        if let Some(binding) = &self.param.partition_binding {
+            self.meta_mgr.bind_table_partition(binding).await?;
+        }
+        Ok(())
     }
 }

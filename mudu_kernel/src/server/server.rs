@@ -193,7 +193,7 @@ struct TransferredConnection {
 
 struct WorkerConnection {
     conn_id: u64,
-    state: crate::server::fsm::ConnectionState,
+    state: crate::server::connection_state::ConnectionState,
     stream: TcpStream,
     remote_addr: SocketAddr,
     transferred: bool,
@@ -225,7 +225,7 @@ fn apply_handle_result_to_connection(
                 Some(transfer.action()),
             )?;
             connection.transferred = true;
-            connection.state = crate::server::fsm::ConnectionState::Closing;
+            connection.state = crate::server::connection_state::ConnectionState::Closing;
             connection.write_buf.clear();
         }
     }
@@ -585,7 +585,7 @@ fn enqueue_transfer(
         transfer: ConnectionTransfer::new(
             conn_id,
             target_worker,
-            crate::server::fsm::ConnectionState::Accepted,
+            crate::server::connection_state::ConnectionState::Accepted,
             remote_addr,
         ),
         stream,
@@ -644,7 +644,7 @@ fn register_connection(
         conn_id,
         WorkerConnection {
             conn_id,
-            state: crate::server::fsm::ConnectionState::Active,
+            state: crate::server::connection_state::ConnectionState::Active,
             stream,
             remote_addr,
             transferred: false,
@@ -672,7 +672,7 @@ fn drive_connections(
         progressed |= flush_pending_writes(connection)?;
         let connection_progress = read_and_dispatch(worker, async_funcs, connection, inboxes)?;
         progressed |= connection_progress;
-        if connection.state == crate::server::fsm::ConnectionState::Closing
+        if connection.state == crate::server::connection_state::ConnectionState::Closing
             && connection.write_buf.is_empty()
         {
             closed.push((conn_id, connection.transferred));
@@ -693,7 +693,7 @@ fn flush_pending_writes(connection: &mut WorkerConnection) -> RS<bool> {
     while !connection.write_buf.is_empty() {
         match connection.stream.write(&connection.write_buf) {
             Ok(0) => {
-                connection.state = crate::server::fsm::ConnectionState::Closing;
+                connection.state = crate::server::connection_state::ConnectionState::Closing;
                 break;
             }
             Ok(written) => {
@@ -718,7 +718,7 @@ fn read_and_dispatch(
     loop {
         match connection.stream.read(&mut buf) {
             Ok(0) => {
-                connection.state = crate::server::fsm::ConnectionState::Closing;
+                connection.state = crate::server::connection_state::ConnectionState::Closing;
                 break;
             }
             Ok(read) => {

@@ -1,5 +1,5 @@
-use crate::common::codec::{DecErr, Decode, Decoder, EncErr, Encode, Encoder};
 use crate::common::buf::Buf;
+use crate::common::codec::{DecErr, Decode, Decoder, EncErr, Encode, Encoder};
 #[cfg(any(test, feature = "test"))]
 use arbitrary::{Arbitrary, Unstructured};
 use std::cell::RefCell;

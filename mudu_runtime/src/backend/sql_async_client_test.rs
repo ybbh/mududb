@@ -5,7 +5,9 @@ mod tests {
     use lazy_static::lazy_static;
     use mudu::common::result::RS;
     use mudu_cli::client::async_client::{AsyncClient, AsyncClientImpl};
-    use mudu_contract::protocol::ClientRequest;
+    use mudu_contract::protocol::{ClientRequest, ServerResponse};
+    use mudu_type::dat_type_id::DatTypeID;
+    use mudu_type::datum::DatumDyn;
     use mudu_utils::notifier::notify_wait;
     use std::fs;
     use std::net::TcpListener;
@@ -71,7 +73,35 @@ mod tests {
     async fn with_timeout<T>(future: impl std::future::Future<Output = RS<T>>) -> RS<T> {
         timeout(Duration::from_secs(20), future)
             .await
-            .map_err(|_| mudu::m_error!(mudu::error::ec::EC::TokioErr, "sql async client test timed out"))?
+            .map_err(|_| {
+                mudu::m_error!(
+                    mudu::error::ec::EC::TokioErr,
+                    "sql async client test timed out"
+                )
+            })?
+    }
+
+    fn response_rows_as_strings(response: &ServerResponse) -> Vec<Vec<String>> {
+        response
+            .rows()
+            .iter()
+            .map(|row| {
+                row.values()
+                    .iter()
+                    .zip(response.row_desc().fields().iter())
+                    .map(|(value, field_desc)| {
+                        if field_desc.dat_type().dat_type_id() == DatTypeID::String {
+                            value.expect_string().clone()
+                        } else {
+                            value
+                                .to_textual(field_desc.dat_type())
+                                .map(|text| text.to_string())
+                                .unwrap()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
     }
 
     fn stop_server(
@@ -81,16 +111,21 @@ mod tests {
     ) -> RS<()> {
         drop(client);
         stop_notifier.notify_all();
-        server
-            .join()
-            .map_err(|_| mudu::m_error!(mudu::error::ec::EC::ThreadErr, "join sql async backend thread error"))?
+        server.join().map_err(|_| {
+            mudu::m_error!(
+                mudu::error::ec::EC::ThreadErr,
+                "join sql async backend thread error"
+            )
+        })?
     }
 
-    async fn start_client_backend() -> Option<RS<(
-        AsyncClientImpl,
-        mudu_utils::notifier::Notifier,
-        JoinHandle<RS<()>>,
-    )>> {
+    async fn start_client_backend() -> Option<
+        RS<(
+            AsyncClientImpl,
+            mudu_utils::notifier::Notifier,
+            JoinHandle<RS<()>>,
+        )>,
+    > {
         let Some(cfg) = test_cfg() else {
             return None;
         };
@@ -129,40 +164,42 @@ mod tests {
             Err(err) => {
                 stop_notifier.notify_all();
                 let _ = server.join();
-                if err.to_string().contains("connect io_uring tcp server error") {
+                if err
+                    .to_string()
+                    .contains("connect io_uring tcp server error")
+                {
                     return Ok(());
                 }
                 return Err(err);
             }
         };
 
-        with_timeout(client
-            .execute(ClientRequest::new(
-                "default",
-                "CREATE TABLE t(id INT, v INT, PRIMARY KEY(id))",
-            )))
+        with_timeout(client.execute(ClientRequest::new(
+            "default",
+            "CREATE TABLE t(id INT, v INT, PRIMARY KEY(id))",
+        )))
         .await?;
-        let inserted = with_timeout(client
-            .execute(ClientRequest::new(
-                "default",
-                "INSERT INTO t(id, v) VALUES (1, 10)",
-            )))
+        let inserted = with_timeout(client.execute(ClientRequest::new(
+            "default",
+            "INSERT INTO t(id, v) VALUES (1, 10)",
+        )))
         .await?;
         assert_eq!(inserted.affected_rows(), 1);
 
-        let selected = with_timeout(client
-            .query(ClientRequest::new(
-                "default",
-                "SELECT id, v FROM t WHERE id = 1",
-            )))
+        let selected = with_timeout(client.query(ClientRequest::new(
+            "default",
+            "SELECT id, v FROM t WHERE id = 1",
+        )))
         .await?;
-        assert_eq!(selected.rows(), &[vec!["1".to_string(), "10".to_string()]]);
+        assert_eq!(
+            response_rows_as_strings(&selected),
+            vec![vec!["1".to_string(), "10".to_string()]]
+        );
 
-        let updated = with_timeout(client
-            .execute(ClientRequest::new(
-                "default",
-                "UPDATE t SET v = 20 WHERE id = 1",
-            )))
+        let updated = with_timeout(client.execute(ClientRequest::new(
+            "default",
+            "UPDATE t SET v = 20 WHERE id = 1",
+        )))
         .await?;
         assert_eq!(updated.affected_rows(), 1);
 
@@ -171,13 +208,11 @@ mod tests {
             "SELECT v FROM t WHERE id = 1",
         )))
         .await?;
-        assert_eq!(selected.rows(), &[vec!["20".to_string()]]);
+        assert_eq!(response_rows_as_strings(&selected), vec![vec!["20".to_string()]]);
 
-        let deleted = with_timeout(client
-            .execute(ClientRequest::new(
-                "default",
-                "DELETE FROM t WHERE id = 1",
-            )))
+        let deleted = with_timeout(
+            client.execute(ClientRequest::new("default", "DELETE FROM t WHERE id = 1")),
+        )
         .await?;
         assert_eq!(deleted.affected_rows(), 1);
 
@@ -207,28 +242,32 @@ mod tests {
             Err(err) => {
                 stop_notifier.notify_all();
                 let _ = server.join();
-                if err.to_string().contains("connect io_uring tcp server error") {
+                if err
+                    .to_string()
+                    .contains("connect io_uring tcp server error")
+                {
                     return Ok(());
                 }
                 return Err(err);
             }
         };
 
-        with_timeout(client
-            .batch(ClientRequest::new(
-                "default",
-                "CREATE TABLE t(id INT, v INT, PRIMARY KEY(id));\
+        with_timeout(client.batch(ClientRequest::new(
+            "default",
+            "CREATE TABLE t(id INT, v INT, PRIMARY KEY(id));\
                  INSERT INTO t(id, v) VALUES (1, 11);",
-            )))
+        )))
         .await?;
 
-        let selected = with_timeout(client
-            .query(ClientRequest::new(
-                "default",
-                "SELECT id, v FROM t WHERE id = 1",
-            )))
+        let selected = with_timeout(client.query(ClientRequest::new(
+            "default",
+            "SELECT id, v FROM t WHERE id = 1",
+        )))
         .await?;
-        assert_eq!(selected.rows(), &[vec!["1".to_string(), "11".to_string()]]);
+        assert_eq!(
+            response_rows_as_strings(&selected),
+            vec![vec!["1".to_string(), "11".to_string()]]
+        );
 
         stop_server(client, stop_notifier, server)?;
         Ok(())
@@ -291,8 +330,8 @@ mod tests {
         )))
         .await?;
         assert_eq!(
-            selected.rows(),
-            &[
+            response_rows_as_strings(&selected),
+            vec![
                 vec!["2".to_string(), "20".to_string()],
                 vec!["3".to_string(), "30".to_string()],
                 vec!["4".to_string(), "40".to_string()],
@@ -305,11 +344,8 @@ mod tests {
         )))
         .await?;
         assert_eq!(
-            selected.rows(),
-            &[
-                vec!["3".to_string()],
-                vec!["4".to_string()],
-            ]
+            response_rows_as_strings(&selected),
+            vec![vec!["3".to_string()], vec!["4".to_string()]]
         );
 
         let selected = with_timeout(client.query(ClientRequest::new(
@@ -318,11 +354,8 @@ mod tests {
         )))
         .await?;
         assert_eq!(
-            selected.rows(),
-            &[
-                vec!["40".to_string()],
-                vec!["50".to_string()],
-            ]
+            response_rows_as_strings(&selected),
+            vec![vec!["40".to_string()], vec!["50".to_string()]]
         );
 
         let selected = with_timeout(client.query(ClientRequest::new(
@@ -337,7 +370,7 @@ mod tests {
             "SELECT id FROM t WHERE id >= 3 AND id <= 3",
         )))
         .await?;
-        assert_eq!(selected.rows(), &[vec!["3".to_string()]]);
+        assert_eq!(response_rows_as_strings(&selected), vec![vec!["3".to_string()]]);
 
         let selected = with_timeout(client.query(ClientRequest::new(
             "default",
@@ -345,11 +378,8 @@ mod tests {
         )))
         .await?;
         assert_eq!(
-            selected.rows(),
-            &[
-                vec!["1".to_string()],
-                vec!["2".to_string()],
-            ]
+            response_rows_as_strings(&selected),
+            vec![vec!["1".to_string()], vec!["2".to_string()]]
         );
 
         let selected = with_timeout(client.query(ClientRequest::new(
@@ -358,8 +388,8 @@ mod tests {
         )))
         .await?;
         assert_eq!(
-            selected.rows(),
-            &[
+            response_rows_as_strings(&selected),
+            vec![
                 vec!["20".to_string()],
                 vec!["30".to_string()],
                 vec!["40".to_string()],
@@ -389,9 +419,10 @@ mod tests {
         )))
         .await
         .expect_err("mixed equality and range predicate should be rejected");
-        assert!(err
-            .to_string()
-            .contains("mixed equality and range predicates are not implemented"));
+        assert!(
+            err.to_string()
+                .contains("mixed equality and range predicates are not implemented")
+        );
 
         stop_server(client, stop_notifier, server)?;
         Ok(())

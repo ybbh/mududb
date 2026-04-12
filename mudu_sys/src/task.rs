@@ -2,6 +2,7 @@ use crate::env::default_env;
 use mudu::common::result::RS;
 use mudu::error::ec::EC;
 use mudu::m_error;
+#[cfg(not(target_arch = "wasm32"))]
 use std::future::Future;
 use std::thread;
 use std::time::Duration;
@@ -33,6 +34,7 @@ where
         .map_err(|e| m_error!(EC::ThreadErr, "spawn thread error", e))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_tokio<F>(fut: F) -> tokio::task::JoinHandle<F::Output>
 where
     F: Future + Send + 'static,

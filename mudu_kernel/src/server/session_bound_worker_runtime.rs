@@ -1,10 +1,11 @@
+use crate::contract::meta_mgr::MetaMgr;
+use crate::server::message_bus_api::{message_bus_for_worker, MessageBusRef};
 use crate::server::request_response_worker::{RequestResponseWorker, WorkerRuntimeRef};
 use crate::server::routing::{SessionOpenConfig, SessionOpenTransferAction};
 use crate::server::worker::IoUringWorker;
 use crate::server::worker_local::{WorkerExecute, WorkerLocal, WorkerLocalRef};
 use crate::server::worker_registry::WorkerRegistry;
 use crate::server::worker_snapshot::KvItem;
-use crate::contract::meta_mgr::MetaMgr;
 use async_trait::async_trait;
 use mudu::common::id::OID;
 use mudu::common::result::RS;
@@ -45,6 +46,10 @@ impl WorkerLocal for SessionBoundWorkerRuntime {
 
     fn meta_mgr(&self) -> Arc<dyn MetaMgr> {
         self.worker.meta_mgr()
+    }
+
+    fn message_bus(&self) -> MessageBusRef {
+        message_bus_for_worker(self.worker.worker_id()).expect("message bus is not registered")
     }
 
     async fn open_async(&self) -> RS<OID> {
@@ -94,7 +99,9 @@ impl WorkerLocal for SessionBoundWorkerRuntime {
         start_key: &[u8],
         end_key: &[u8],
     ) -> RS<Vec<KvItem>> {
-        self.worker.range_in_session(session_id, start_key, end_key).await
+        self.worker
+            .range_in_session(session_id, start_key, end_key)
+            .await
     }
 
     async fn query(
@@ -106,21 +113,11 @@ impl WorkerLocal for SessionBoundWorkerRuntime {
         self.worker.query(oid, sql, param).await
     }
 
-    async fn execute(
-        &self,
-        oid: OID,
-        sql: Box<dyn SQLStmt>,
-        param: Box<dyn SQLParams>,
-    ) -> RS<u64> {
+    async fn execute(&self, oid: OID, sql: Box<dyn SQLStmt>, param: Box<dyn SQLParams>) -> RS<u64> {
         self.worker.execute(oid, sql, param).await
     }
 
-    async fn batch(
-        &self,
-        oid: OID,
-        sql: Box<dyn SQLStmt>,
-        param: Box<dyn SQLParams>,
-    ) -> RS<u64> {
+    async fn batch(&self, oid: OID, sql: Box<dyn SQLStmt>, param: Box<dyn SQLParams>) -> RS<u64> {
         self.worker.batch(oid, sql, param).await
     }
 }

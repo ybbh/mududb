@@ -1,5 +1,6 @@
-use crate::server::worker_snapshot::KvItem;
 use crate::contract::meta_mgr::MetaMgr;
+use crate::server::message_bus_api::MessageBusRef;
+use crate::server::worker_snapshot::KvItem;
 use async_trait::async_trait;
 use mudu::common::id::OID;
 use mudu::common::result::RS;
@@ -27,6 +28,7 @@ pub enum WorkerExecute {
 pub trait WorkerLocal: Send + Sync {
     fn x_contract(&self) -> Arc<dyn XContract>;
     fn meta_mgr(&self) -> Arc<dyn MetaMgr>;
+    fn message_bus(&self) -> MessageBusRef;
 
     async fn open_async(&self) -> RS<OID>;
 
@@ -65,19 +67,9 @@ pub trait WorkerLocal: Send + Sync {
         param: Box<dyn SQLParams>,
     ) -> RS<Arc<dyn ResultSetAsync>>;
 
-    async fn execute(
-        &self,
-        oid: OID,
-        sql: Box<dyn SQLStmt>,
-        param: Box<dyn SQLParams>,
-    ) -> RS<u64>;
+    async fn execute(&self, oid: OID, sql: Box<dyn SQLStmt>, param: Box<dyn SQLParams>) -> RS<u64>;
 
-    async fn batch(
-        &self,
-        oid: OID,
-        sql: Box<dyn SQLStmt>,
-        param: Box<dyn SQLParams>,
-    ) -> RS<u64>;
+    async fn batch(&self, oid: OID, sql: Box<dyn SQLStmt>, param: Box<dyn SQLParams>) -> RS<u64>;
 }
 
 pub type WorkerLocalRef = Arc<dyn WorkerLocal + Send + Sync>;
@@ -100,6 +92,7 @@ pub(crate) fn unset_current_worker_local() {
     });
 }
 
+#[allow(dead_code)]
 pub(crate) fn current_worker_local() -> WorkerLocalRef {
     CURRENT_WORKER_LOCAL.with(|slot| {
         // Safety: shared reads are confined to the current thread-local slot.
@@ -108,5 +101,13 @@ pub(crate) fn current_worker_local() -> WorkerLocalRef {
             .as_ref()
             .cloned()
             .unwrap_or_else(|| panic!("current worker local is not set"))
+    })
+}
+
+pub fn try_current_worker_local() -> Option<WorkerLocalRef> {
+    CURRENT_WORKER_LOCAL.with(|slot| {
+        // Safety: shared reads are confined to the current thread-local slot.
+        let worker_local = unsafe { &*slot.get() };
+        worker_local.as_ref().cloned()
     })
 }

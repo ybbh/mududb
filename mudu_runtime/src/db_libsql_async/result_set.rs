@@ -73,7 +73,7 @@ impl ResultSetInner {
             .map_err(|e| m_error!(EC::DBInternalError, "query result next", e))?;
         match opt_row {
             Some(row) => {
-                let items = turso_db_row_to_tuple_item(row, self.tuple_desc.fields())?;
+                let items = libsql_db_row_to_tuple_item(row, self.tuple_desc.fields())?;
                 Ok(Some(items))
             }
             None => {
@@ -102,7 +102,7 @@ impl Drop for ResultSetInner {
     }
 }
 
-fn turso_db_row_to_tuple_item(row: Row, item_desc: &[DatumDesc]) -> RS<TupleValue> {
+fn libsql_db_row_to_tuple_item(row: Row, item_desc: &[DatumDesc]) -> RS<TupleValue> {
     let mut vec = vec![];
     if row.column_count() as usize != item_desc.len() {
         return Err(m_error!(EC::FatalError, "column count mismatch"));

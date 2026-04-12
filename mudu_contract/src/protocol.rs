@@ -1,3 +1,5 @@
+use crate::tuple::tuple_field_desc::TupleFieldDesc;
+use crate::tuple::tuple_value::TupleValue;
 use mudu::common::result::RS;
 use mudu::error::ec::EC;
 use mudu::m_error;
@@ -75,8 +77,8 @@ pub struct ClientRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerResponse {
-    columns: Vec<String>,
-    rows: Vec<Vec<String>>,
+    row_desc: TupleFieldDesc,
+    rows: Vec<TupleValue>,
     affected_rows: u64,
     error: Option<String>,
 }
@@ -319,24 +321,24 @@ impl ClientRequest {
 
 impl ServerResponse {
     pub fn new(
-        columns: Vec<String>,
-        rows: Vec<Vec<String>>,
+        row_desc: TupleFieldDesc,
+        rows: Vec<TupleValue>,
         affected_rows: u64,
         error: Option<String>,
     ) -> Self {
         Self {
-            columns,
+            row_desc,
             rows,
             affected_rows,
             error,
         }
     }
 
-    pub fn columns(&self) -> &[String] {
-        &self.columns
+    pub fn row_desc(&self) -> &TupleFieldDesc {
+        &self.row_desc
     }
 
-    pub fn rows(&self) -> &[Vec<String>] {
+    pub fn rows(&self) -> &[TupleValue] {
         &self.rows
     }
 
@@ -853,17 +855,27 @@ mod tests {
             b"input".to_vec()
         );
 
+        use crate::tuple::datum_desc::DatumDesc;
+        use crate::tuple::tuple_field_desc::TupleFieldDesc;
+        use crate::tuple::tuple_value::TupleValue;
+        use mudu_type::dat_type::DatType;
+        use mudu_type::dat_type_id::DatTypeID;
+        use mudu_type::dat_value::DatValue;
+
         let response = ServerResponse::new(
-            vec!["value".to_string()],
-            vec![vec!["1".to_string()]],
+            TupleFieldDesc::new(vec![DatumDesc::new(
+                "value".to_string(),
+                DatType::default_for(DatTypeID::String),
+            )]),
+            vec![TupleValue::from(vec![DatValue::from_string("1".to_string())])],
             0,
             None,
         );
         let response_frame =
             Frame::decode(&encode_server_response(12, &response).unwrap()).unwrap();
         let decoded_response = decode_server_response(&response_frame).unwrap();
-        assert_eq!(decoded_response.columns(), &["value".to_string()]);
-        assert_eq!(decoded_response.rows(), &[vec!["1".to_string()]]);
+        assert_eq!(decoded_response.row_desc().fields()[0].name(), "value");
+        assert_eq!(decoded_response.rows()[0].values()[0].expect_string(), "1");
 
         let get_response_frame = Frame::decode(
             &encode_get_response(13, &GetResponse::new(Some(b"v".to_vec()))).unwrap(),

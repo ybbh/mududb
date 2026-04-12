@@ -134,7 +134,7 @@ fn build_transfer(
         ConnectionTransfer::new(
             conn_id,
             transfer.target_worker(),
-            crate::server::fsm::ConnectionState::Active,
+            crate::server::connection_state::ConnectionState::Active,
             remote_addr,
         ),
         socket.into_raw_fd(),

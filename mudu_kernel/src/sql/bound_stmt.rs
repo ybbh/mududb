@@ -1,3 +1,5 @@
+use crate::contract::partition_rule::PartitionRuleDesc;
+use crate::contract::partition_rule_binding::{PartitionPlacement, TablePartitionBinding};
 use crate::contract::schema_table::SchemaTable;
 use mudu::common::id::{AttrIndex, OID};
 use mudu_contract::tuple::tuple_field_desc::TupleFieldDesc;
@@ -16,6 +18,8 @@ pub enum BoundQuery {
 
 #[derive(Clone, Debug)]
 pub enum BoundCommand {
+    CreatePartitionPlacement(BoundCreatePartitionPlacement),
+    CreatePartitionRule(BoundCreatePartitionRule),
     CreateTable(BoundCreateTable),
     DropTable(BoundDropTable),
     Insert(BoundInsert),
@@ -34,8 +38,19 @@ pub struct BoundSelect {
 }
 
 #[derive(Clone, Debug)]
+pub struct BoundCreatePartitionRule {
+    pub rule: PartitionRuleDesc,
+}
+
+#[derive(Clone, Debug)]
+pub struct BoundCreatePartitionPlacement {
+    pub placements: Vec<PartitionPlacement>,
+}
+
+#[derive(Clone, Debug)]
 pub struct BoundCreateTable {
     pub schema: SchemaTable,
+    pub partition_binding: Option<TablePartitionBinding>,
 }
 
 #[derive(Clone, Debug)]

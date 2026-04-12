@@ -1,3 +1,5 @@
+use crate::command::create_partition_placement::CreatePartitionPlacement;
+use crate::command::create_partition_rule::CreatePartitionRule;
 use crate::command::create_table::CreateTable;
 use crate::command::delete_key_value::DeleteKeyValue;
 use crate::command::drop_table::DropTable;
@@ -8,14 +10,15 @@ use crate::command::update_key_value::UpdateKeyValue;
 use crate::contract::cmd_exec::CmdExec;
 use crate::contract::query_exec::QueryExec;
 use crate::sql::bound_stmt::{
-    BoundCommand, BoundCopyFrom, BoundCopyTo, BoundCreateTable, BoundDelete, BoundDropTable,
-    BoundInsert, BoundPredicate, BoundQuery, BoundSelect, BoundUpdate,
+    BoundCommand, BoundCopyFrom, BoundCopyTo, BoundCreatePartitionPlacement,
+    BoundCreatePartitionRule, BoundCreateTable, BoundDelete, BoundDropTable, BoundInsert,
+    BoundPredicate, BoundQuery, BoundSelect, BoundUpdate,
 };
 use crate::sql::plan_ctx::PlanCtx;
 use crate::x_engine::api::{OptRead, Predicate, RangeData, VecDatum, VecSelTerm};
 use crate::x_engine::x_param::{
-    PAccessKey, PAccessRange, PCreateTable, PDeleteKeyValue, PDropTable, PInsertKeyValue,
-    PUpdateKeyValue,
+    PAccessKey, PAccessRange, PCreatePartitionPlacement, PCreatePartitionRule, PCreateTable,
+    PDeleteKeyValue, PDropTable, PInsertKeyValue, PUpdateKeyValue,
 };
 use mudu::common::result::RS;
 use std::sync::Arc;
@@ -37,6 +40,12 @@ impl Planner {
 
     pub async fn plan_command(&self, command: BoundCommand) -> RS<Arc<dyn CmdExec>> {
         match command {
+            BoundCommand::CreatePartitionPlacement(stmt) => {
+                Ok(Arc::new(self.plan_create_partition_placement(stmt)))
+            }
+            BoundCommand::CreatePartitionRule(stmt) => {
+                Ok(Arc::new(self.plan_create_partition_rule(stmt)))
+            }
             BoundCommand::CreateTable(stmt) => Ok(Arc::new(self.plan_create_table(stmt))),
             BoundCommand::DropTable(stmt) => Ok(Arc::new(self.plan_drop_table(stmt))),
             BoundCommand::Insert(stmt) => Ok(Arc::new(self.plan_insert(stmt))),
@@ -103,11 +112,35 @@ impl Planner {
         }
     }
 
+    fn plan_create_partition_placement(
+        &self,
+        stmt: BoundCreatePartitionPlacement,
+    ) -> CreatePartitionPlacement {
+        CreatePartitionPlacement::new(
+            PCreatePartitionPlacement {
+                tx_mgr: self.ctx.tx_mgr.clone(),
+                placements: stmt.placements,
+            },
+            self.ctx.meta_mgr.clone(),
+        )
+    }
+
+    fn plan_create_partition_rule(&self, stmt: BoundCreatePartitionRule) -> CreatePartitionRule {
+        CreatePartitionRule::new(
+            PCreatePartitionRule {
+                tx_mgr: self.ctx.tx_mgr.clone(),
+                rule: stmt.rule,
+            },
+            self.ctx.meta_mgr.clone(),
+        )
+    }
+
     fn plan_create_table(&self, stmt: BoundCreateTable) -> CreateTable {
         CreateTable::new(
             PCreateTable {
                 tx_mgr: self.ctx.tx_mgr.clone(),
                 schema: stmt.schema,
+                partition_binding: stmt.partition_binding,
             },
             self.ctx.x_contract.clone(),
             self.ctx.meta_mgr.clone(),

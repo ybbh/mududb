@@ -8,6 +8,7 @@ use crate::service::runtime_opt::RuntimeOpt;
 use async_trait::async_trait;
 use mudu::common::id::OID;
 use mudu::common::result::RS;
+use mudu::common::xid::INVALID_XID;
 use mudu::error::ec::EC;
 use mudu::m_error;
 use mudu_binding::procedure::procedure_invoke;
@@ -69,7 +70,11 @@ impl AsyncFuncInvoker for MuduProcInvoker {
         let task_id = app.task_create().await?;
         let invoke_result = async {
             let mut param = procedure_invoke::deserialize_param(&procedure_parameters)?;
-            param.set_session_id(session_id);
+            let _ = session_id;
+            // TCP session ids belong to the transport/session manager. Procedure
+            // host syscalls require a database Context xid, so let the app
+            // runtime create one per invocation.
+            param.set_session_id(INVALID_XID);
             let result = if self.enable_async {
                 app.invoke_async(task_id, &mod_name, &proc_name, param, Some(worker_local))
                     .await?
@@ -209,6 +214,7 @@ async fn create_runtime_from_cfg(cfg: &MuduDBCfg) -> RS<Arc<dyn Runtime>> {
         RuntimeOpt {
             component_target,
             enable_async,
+            sever_mode: cfg.server_mode,
         },
     )
     .await

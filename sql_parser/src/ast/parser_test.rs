@@ -72,6 +72,24 @@ mod tests {
     }
 
     #[test]
+    fn parse_select_reverts_literal_field_comparison_shape() {
+        let stmts = parse_sql("select id from users where 7 > id;").unwrap();
+
+        let StmtType::Select(stmt) = &stmts[0] else {
+            panic!("expected select");
+        };
+        let predicate = stmt.get_where_predicate()[0]
+            .expr_field_op_literal()
+            .expect("expected field-literal pair");
+        assert_eq!(predicate.0.name(), "id");
+        assert_eq!(
+            predicate.1.dat_type().dat_type().dat_type_id(),
+            mudu_type::dat_type_id::DatTypeID::I64
+        );
+        assert!(matches!(predicate.2, ValueCompare::LE));
+    }
+
+    #[test]
     fn parse_insert_without_column_list() {
         let stmts = parse_sql("insert into users values (1, 'alice');").unwrap();
 
@@ -97,6 +115,15 @@ mod tests {
     }
 
     #[test]
+    fn parse_multiple_statements_with_trailing_semicolons() {
+        let stmts = parse_sql("insert into users values (1); delete from users where id = 1;")
+            .unwrap();
+        assert_eq!(stmts.len(), 2);
+        assert!(matches!(stmts[0], StmtType::Command(StmtCommand::Insert(_))));
+        assert!(matches!(stmts[1], StmtType::Command(StmtCommand::Delete(_))));
+    }
+
+    #[test]
     fn parse_update_distinguishes_value_and_expression_assignments() {
         let stmts =
             parse_sql("update users set count = 1, total = count + 1 where id = 1;").unwrap();
@@ -116,6 +143,27 @@ mod tests {
             other => panic!("expected arithmetic assignment, got {other:?}"),
         }
         assert_eq!(stmt.get_where_predicate().len(), 1);
+    }
+
+    #[test]
+    fn parse_update_keeps_arithmetic_precedence_shape() {
+        let stmts = parse_sql("update users set total = count + 1 * 2 where id = 1;").unwrap();
+
+        let StmtType::Command(StmtCommand::Update(stmt)) = &stmts[0] else {
+            panic!("expected update");
+        };
+        match stmt.get_set_values()[0].get_set_value() {
+            AssignedValue::Expression(ExprType::Arithmetic(expr)) => {
+                assert!(matches!(expr.op(), Arithmetic::PLUS));
+                match expr.right() {
+                    ExprType::Arithmetic(nested) => {
+                        assert!(matches!(nested.op(), Arithmetic::MULTIPLE));
+                    }
+                    other => panic!("expected nested multiply, got {other:?}"),
+                }
+            }
+            other => panic!("expected arithmetic assignment, got {other:?}"),
+        }
     }
 
     #[test]
@@ -295,5 +343,69 @@ mod tests {
         let path = path.join("data/ddl.sql");
         let r = parse_file(path);
         assert!(r.is_ok())
+    }
+
+    #[test]
+    fn parse_create_partition_rule_custom_statement() {
+        let stmts = parse_sql(
+            "
+            CREATE PARTITION RULE r_orders RANGE (
+                PARTITION p0 VALUES FROM (MINVALUE, MINVALUE) TO (1000, MINVALUE),
+                PARTITION p1 VALUES FROM (1000, MINVALUE) TO (MAXVALUE, MAXVALUE)
+            );
+            ",
+        )
+        .unwrap();
+
+        let StmtType::Command(StmtCommand::CreatePartitionRule(stmt)) = &stmts[0] else {
+            panic!("expected create partition rule");
+        };
+        assert_eq!(stmt.rule_name(), "r_orders");
+        assert_eq!(stmt.partitions().len(), 2);
+        assert_eq!(stmt.partitions()[0].name(), "p0");
+    }
+
+    #[test]
+    fn parse_create_table_with_partition_binding_clause() {
+        let stmt = parse_create_table(
+            "
+            CREATE TABLE orders (
+                region_id INT,
+                order_id INT,
+                amount INT,
+                PRIMARY KEY (region_id, order_id)
+            )
+            PARTITION BY GLOBAL RULE r_orders REFERENCES (region_id, order_id);
+            ",
+        )
+        .unwrap();
+
+        let partition = stmt.partition().expect("expected partition binding");
+        assert_eq!(partition.rule_name(), "r_orders");
+        assert_eq!(
+            partition.reference_columns(),
+            &vec!["region_id".to_string(), "order_id".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_create_partition_placement_custom_statement() {
+        let stmts = parse_sql(
+            "
+            CREATE PARTITION PLACEMENT FOR RULE r_orders (
+                PARTITION p0 ON WORKER 11,
+                PARTITION p1 ON WORKER 12
+            );
+            ",
+        )
+        .unwrap();
+
+        let StmtType::Command(StmtCommand::CreatePartitionPlacement(stmt)) = &stmts[0] else {
+            panic!("expected create partition placement");
+        };
+        assert_eq!(stmt.rule_name(), "r_orders");
+        assert_eq!(stmt.placements().len(), 2);
+        assert_eq!(stmt.placements()[0].partition_name(), "p0");
+        assert_eq!(stmt.placements()[0].worker_id(), "11");
     }
 }

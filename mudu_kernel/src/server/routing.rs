@@ -1,4 +1,4 @@
-use crate::server::fsm::ConnectionState;
+use crate::server::connection_state::ConnectionState;
 use crate::server::worker_registry::WorkerRegistry;
 use mudu::common::id::OID;
 use mudu::common::result::RS;

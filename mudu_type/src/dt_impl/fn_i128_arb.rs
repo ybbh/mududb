@@ -9,7 +9,7 @@ pub fn fn_i128_arb_val(u: &mut Unstructured, _: &DatType) -> arbitrary::Result<D
 }
 
 pub fn fn_i128_arb_printable(u: &mut Unstructured, _: &DatType) -> arbitrary::Result<String> {
-    Ok(i128::arbitrary(u)?.to_string())
+    Ok(format!("\"{}\"", i128::arbitrary(u)?))
 }
 
 pub fn fn_i128_arb_dt_param(_u: &mut Unstructured) -> arbitrary::Result<DatType> {

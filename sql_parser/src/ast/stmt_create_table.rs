@@ -1,5 +1,6 @@
 use crate::ast::ast_node::ASTNode;
 use crate::ast::column_def::ColumnDef;
+use crate::ast::stmt_table_partition::StmtTablePartition;
 use mudu::common::id::AttrIndex;
 use std::fmt::Debug;
 
@@ -9,6 +10,7 @@ pub struct StmtCreateTable {
     column_def: Vec<ColumnDef>,
     primary_key_column_def: Vec<AttrIndex>,
     non_primary_key_column_def: Vec<AttrIndex>,
+    partition: Option<StmtTablePartition>,
 }
 
 impl StmtCreateTable {
@@ -18,6 +20,7 @@ impl StmtCreateTable {
             column_def: vec![],
             primary_key_column_def: vec![],
             non_primary_key_column_def: vec![],
+            partition: None,
         }
     }
 
@@ -63,6 +66,14 @@ impl StmtCreateTable {
             .iter()
             .map(|index| &self.column_def[*index])
             .collect()
+    }
+
+    pub fn partition(&self) -> Option<&StmtTablePartition> {
+        self.partition.as_ref()
+    }
+
+    pub fn set_partition(&mut self, partition: StmtTablePartition) {
+        self.partition = Some(partition);
     }
 
     pub fn assign_index_for_columns(&mut self) {

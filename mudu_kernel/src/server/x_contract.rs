@@ -8,13 +8,23 @@ use mudu::m_error;
 use mudu_contract::tuple::build_tuple::build_tuple;
 use mudu_contract::tuple::tuple_binary::TupleBinary as TupleRaw;
 use mudu_contract::tuple::update_tuple::update_tuple;
+use mudu_type::dt_function::send_binary;
 use std::ops::Bound;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::contract::meta_mgr::MetaMgr;
 use crate::contract::schema_table::SchemaTable;
 use crate::contract::table_desc::TableDesc;
 use crate::meta::meta_mgr_factory::MetaMgrFactory;
+use crate::server::message_bus_api::{
+    current_message_bus, DeliveryMode, EndpointId, Envelope, MessageKind, OutgoingMessage,
+    RecvFilter,
+};
+use crate::server::partition_rpc::{PartitionRpcRequest, PartitionRpcResponse, RpcBound};
+use crate::server::partition_router::{
+    PartitionRouter, DEFAULT_UNPARTITIONED_TABLE_PARTITION_ID,
+};
 use crate::server::worker_snapshot::{KvItem, WorkerSnapshot, WorkerSnapshotMgr};
 use crate::server::worker_storage::WorkerStorage;
 use crate::server::worker_tx_manager::WorkerTxManager;
@@ -27,10 +37,16 @@ use crate::x_engine::api::{
 };
 use crate::x_engine::tx_mgr::TxMgr;
 type DatBin = Buf;
+const PARTITION_RPC_REQUEST_KIND: MessageKind = MessageKind::User(0x7101);
+const PARTITION_RPC_RESPONSE_KIND: MessageKind = MessageKind::User(0x7102);
 
 pub struct IoUringXContract {
+    worker_id: OID,
+    default_unpartitioned_worker_id: OID,
     meta_mgr: Arc<dyn MetaMgr>,
     storage: Arc<WorkerStorage>,
+    partition_router: PartitionRouter,
+    partition_rpc_registered: AtomicBool,
     log: Option<ChunkedWorkerLogBackend>,
     snapshot_mgr: WorkerSnapshotMgr,
     tx_lock: XLockMgr,
@@ -48,16 +64,18 @@ struct VecCursorInner {
 
 impl IoUringXContract {
     pub fn new(meta_mgr: Arc<dyn MetaMgr>) -> Self {
-        Self::with_log_and_data_dir(meta_mgr, None, 0, default_worker_storage_data_dir())
+        Self::with_log_and_data_dir(meta_mgr, None, 0, 0, 0, default_worker_storage_data_dir())
     }
 
     pub fn with_log(meta_mgr: Arc<dyn MetaMgr>, log: Option<ChunkedWorkerLogBackend>) -> Self {
-        Self::with_log_and_data_dir(meta_mgr, log, 0, default_worker_storage_data_dir())
+        Self::with_log_and_data_dir(meta_mgr, log, 0, 0, 0, default_worker_storage_data_dir())
     }
 
     pub fn with_log_and_data_dir(
         meta_mgr: Arc<dyn MetaMgr>,
         log: Option<ChunkedWorkerLogBackend>,
+        worker_id: OID,
+        default_unpartitioned_worker_id: OID,
         partition_id: OID,
         data_dir: String,
     ) -> Self {
@@ -67,8 +85,12 @@ impl IoUringXContract {
             .bootstrap_existing_tables_sync()
             .unwrap_or_else(|e| panic!("bootstrap worker storage from meta failed: {e}"));
         Self {
+            worker_id,
+            default_unpartitioned_worker_id,
             meta_mgr: meta_mgr.clone(),
             storage,
+            partition_router: PartitionRouter::new(meta_mgr.clone()),
+            partition_rpc_registered: AtomicBool::new(false),
             log,
             snapshot_mgr: WorkerSnapshotMgr::default(),
             tx_lock: XLockMgr::new(),
@@ -76,21 +98,45 @@ impl IoUringXContract {
     }
 
     pub fn with_worker_log(log: ChunkedWorkerLogBackend) -> Self {
-        Self::with_worker_log_and_data_dir(log, 0, default_worker_storage_data_dir())
+        Self::with_worker_log_and_data_dir(log, 0, 0, 0, default_worker_storage_data_dir())
     }
 
     pub fn with_worker_log_and_data_dir(
         log: ChunkedWorkerLogBackend,
+        worker_id: OID,
+        default_unpartitioned_worker_id: OID,
         partition_id: OID,
         data_dir: String,
     ) -> Self {
         let meta_mgr = MetaMgrFactory::create(data_dir.clone())
             .unwrap_or_else(|e| panic!("create worker meta manager failed: {e}"));
-        Self::with_log_and_data_dir(meta_mgr, Some(log.clone()), partition_id, data_dir)
+        Self::with_log_and_data_dir(
+            meta_mgr,
+            Some(log.clone()),
+            worker_id,
+            default_unpartitioned_worker_id,
+            partition_id,
+            data_dir,
+        )
     }
 
     pub fn worker_log(&self) -> Option<ChunkedWorkerLogBackend> {
         self.log.clone()
+    }
+
+    pub fn worker_id(&self) -> OID {
+        self.worker_id
+    }
+
+    async fn resolve_partition_worker(&self, partition_id: OID) -> RS<Option<OID>> {
+        match self.meta_mgr.get_partition_worker(partition_id).await? {
+            Some(worker_id) => Ok(Some(worker_id)),
+            None if partition_id == DEFAULT_UNPARTITIONED_TABLE_PARTITION_ID => {
+                Ok((self.default_unpartitioned_worker_id != 0)
+                    .then_some(self.default_unpartitioned_worker_id))
+            }
+            None => Ok(None),
+        }
     }
 
     pub fn worker_begin_tx(&self) -> RS<Arc<dyn TxMgr>> {
@@ -343,7 +389,9 @@ impl IoUringXContract {
         };
         let result = async {
             if let Some(log) = log {
-                new_xl_batch_writer(log.clone()).append(prepared.batch()).await?;
+                new_xl_batch_writer(log.clone())
+                    .append(prepared.batch())
+                    .await?;
                 log.flush_async().await?;
             }
             storage.apply_prepared_commit_async(prepared).await?;
@@ -363,6 +411,26 @@ impl IoUringXContract {
         }
         self.storage.replay_batch(batch)
     }
+
+    pub fn ensure_partition_rpc_handler(self: &Arc<Self>) -> RS<()> {
+        if self.worker_id == 0 || self.partition_rpc_registered.swap(true, Ordering::SeqCst) {
+            return Ok(());
+        }
+        let bus = current_message_bus()?;
+        let contract = self.clone();
+        bus.on_recv_callback(
+            RecvFilter {
+                dst: Some(EndpointId::Worker(self.worker_id)),
+                kind: Some(PARTITION_RPC_REQUEST_KIND),
+                ..RecvFilter::default()
+            },
+            Arc::new(move |envelope| {
+                let contract = contract.clone();
+                Box::pin(async move { contract.handle_partition_rpc(envelope).await })
+            }),
+        )?;
+        Ok(())
+    }
 }
 
 fn default_worker_storage_data_dir() -> String {
@@ -376,12 +444,290 @@ fn default_worker_storage_data_dir() -> String {
 }
 
 impl IoUringXContract {
+    async fn handle_partition_rpc(&self, envelope: Envelope) -> RS<()> {
+        let request = rmp_serde::from_slice::<PartitionRpcRequest>(envelope.payload()).map_err(|e| {
+            m_error!(EC::DecodeErr, "decode partition rpc request error", e)
+        })?;
+        let response = match self.execute_partition_rpc(request).await {
+            Ok(response) => response,
+            Err(err) => PartitionRpcResponse::Err(err.to_string()),
+        };
+        let payload = rmp_serde::to_vec(&response)
+            .map_err(|e| m_error!(EC::EncodeErr, "encode partition rpc response error", e))?;
+        let bus = current_message_bus()?;
+        block_on(bus.send(
+            envelope.src().clone(),
+            OutgoingMessage::new(PARTITION_RPC_RESPONSE_KIND, payload)
+                .with_correlation_id(envelope.msg_id())
+                .with_delivery(DeliveryMode::Response),
+        ))?;
+        Ok(())
+    }
+
+    async fn execute_partition_rpc(&self, request: PartitionRpcRequest) -> RS<PartitionRpcResponse> {
+        match request {
+            PartitionRpcRequest::ReadKey {
+                table_id,
+                partition_id,
+                key,
+                select,
+            } => {
+                let desc = self.meta_mgr.get_table_by_id(table_id).await?;
+                let tx_mgr = self.worker_begin_tx()?;
+                let opt_value = self
+                    .storage
+                    .get_on_partition(table_id, Some(partition_id), &key, tx_mgr.as_ref())
+                    .await?;
+                self.worker_rollback_tx(tx_mgr)?;
+                let projected = opt_value
+                    .map(|value| {
+                        project_selected_fields(&desc, &key, &value, &VecSelTerm::new(select))
+                    })
+                    .transpose()?;
+                Ok(PartitionRpcResponse::ReadKey(projected))
+            }
+            PartitionRpcRequest::ReadRange {
+                table_id,
+                partition_id,
+                start,
+                end,
+                select,
+            } => {
+                let desc = self.meta_mgr.get_table_by_id(table_id).await?;
+                let tx_mgr = self.worker_begin_tx()?;
+                let rows = self
+                    .storage
+                    .range_on_partition(
+                        table_id,
+                        Some(partition_id),
+                        (rpc_bound_as_ref(&start), rpc_bound_as_ref(&end)),
+                        tx_mgr.as_ref(),
+                    )
+                    .await?;
+                self.worker_rollback_tx(tx_mgr)?;
+                let mut projected = Vec::with_capacity(rows.len());
+                for (key, value) in rows {
+                    projected.push(project_selected_fields(
+                        &desc,
+                        &key,
+                        &value,
+                        &VecSelTerm::new(select.clone()),
+                    )?);
+                }
+                Ok(PartitionRpcResponse::ReadRange(projected))
+            }
+            PartitionRpcRequest::Insert {
+                table_id,
+                partition_id,
+                key,
+                value,
+            } => {
+                let tx_mgr = self.worker_begin_tx()?;
+                let current = self
+                    .storage
+                    .get_on_partition(table_id, Some(partition_id), &key, tx_mgr.as_ref())
+                    .await?;
+                if current.is_some() {
+                    self.worker_rollback_tx(tx_mgr)?;
+                    return Err(m_error!(EC::ExistingSuchElement, "existing key"));
+                }
+                self.storage
+                    .put_on_partition(table_id, Some(partition_id), key, value, tx_mgr.as_ref())
+                    .await?;
+                self.worker_commit_tx_async(tx_mgr).await?;
+                Ok(PartitionRpcResponse::Insert)
+            }
+            PartitionRpcRequest::Delete {
+                table_id,
+                partition_id,
+                key,
+            } => {
+                let tx_mgr = self.worker_begin_tx()?;
+                let deleted = self
+                    .storage
+                    .remove_on_partition(table_id, Some(partition_id), &key, tx_mgr.as_ref())
+                    .await?;
+                self.worker_commit_tx_async(tx_mgr).await?;
+                Ok(PartitionRpcResponse::Delete(usize::from(deleted.is_some())))
+            }
+            PartitionRpcRequest::Update {
+                table_id,
+                partition_id,
+                key,
+                values,
+            } => {
+                let desc = self.meta_mgr.get_table_by_id(table_id).await?;
+                let tx_mgr = self.worker_begin_tx()?;
+                let current = self
+                    .storage
+                    .get_on_partition(table_id, Some(partition_id), &key, tx_mgr.as_ref())
+                    .await?;
+                let Some(current) = current else {
+                    self.worker_rollback_tx(tx_mgr)?;
+                    return Ok(PartitionRpcResponse::Update(0));
+                };
+                let updated = apply_value_update(&current, &VecDatum::new(values), &desc)?;
+                self.storage
+                    .put_on_partition(
+                        table_id,
+                        Some(partition_id),
+                        key,
+                        updated,
+                        tx_mgr.as_ref(),
+                    )
+                    .await?;
+                self.worker_commit_tx_async(tx_mgr).await?;
+                Ok(PartitionRpcResponse::Update(1))
+            }
+        }
+    }
+
+    fn send_partition_rpc(
+        &self,
+        target_worker_id: OID,
+        request: PartitionRpcRequest,
+    ) -> RS<PartitionRpcResponse> {
+        let bus = current_message_bus()?;
+        let payload = rmp_serde::to_vec(&request)
+            .map_err(|e| m_error!(EC::EncodeErr, "encode partition rpc request error", e))?;
+        let msg_id = block_on(bus.send(
+            EndpointId::Worker(target_worker_id),
+            OutgoingMessage::new(PARTITION_RPC_REQUEST_KIND, payload)
+                .with_delivery(DeliveryMode::Request),
+        ))?;
+        let envelope = block_on(bus.recv(RecvFilter {
+                src: Some(EndpointId::Worker(target_worker_id)),
+                dst: Some(EndpointId::Worker(self.worker_id)),
+                kind: Some(PARTITION_RPC_RESPONSE_KIND),
+                correlation_id: Some(msg_id),
+            }))?;
+        rmp_serde::from_slice(envelope.payload())
+            .map_err(|e| m_error!(EC::DecodeErr, "decode partition rpc response error", e))
+    }
+
+    async fn remote_read_key(
+        &self,
+        target_worker_id: OID,
+        table_id: OID,
+        partition_id: OID,
+        key: Vec<u8>,
+        select: Vec<AttrIndex>,
+    ) -> RS<Option<Vec<DatBin>>> {
+        match self.send_partition_rpc(
+            target_worker_id,
+            PartitionRpcRequest::ReadKey {
+                table_id,
+                partition_id,
+                key,
+                select,
+            },
+        )?
+        {
+            PartitionRpcResponse::ReadKey(value) => Ok(value),
+            PartitionRpcResponse::Err(err) => Err(m_error!(EC::InternalErr, err)),
+            _ => Err(m_error!(EC::InternalErr, "unexpected read_key rpc response")),
+        }
+    }
+
+    async fn remote_read_range(
+        &self,
+        target_worker_id: OID,
+        table_id: OID,
+        partition_id: OID,
+        start: RpcBound,
+        end: RpcBound,
+        select: Vec<AttrIndex>,
+    ) -> RS<Vec<Vec<DatBin>>> {
+        match self.send_partition_rpc(
+            target_worker_id,
+            PartitionRpcRequest::ReadRange {
+                table_id,
+                partition_id,
+                start,
+                end,
+                select,
+            },
+        )?
+        {
+            PartitionRpcResponse::ReadRange(rows) => Ok(rows),
+            PartitionRpcResponse::Err(err) => Err(m_error!(EC::InternalErr, err)),
+            _ => Err(m_error!(EC::InternalErr, "unexpected read_range rpc response")),
+        }
+    }
+
+    async fn remote_insert(
+        &self,
+        target_worker_id: OID,
+        table_id: OID,
+        partition_id: OID,
+        key: Vec<u8>,
+        value: Vec<u8>,
+    ) -> RS<()> {
+        match self.send_partition_rpc(
+            target_worker_id,
+            PartitionRpcRequest::Insert {
+                table_id,
+                partition_id,
+                key,
+                value,
+            },
+        )? {
+            PartitionRpcResponse::Insert => Ok(()),
+            PartitionRpcResponse::Err(err) => Err(m_error!(EC::InternalErr, err)),
+            _ => Err(m_error!(EC::InternalErr, "unexpected insert rpc response")),
+        }
+    }
+
+    async fn remote_delete(
+        &self,
+        target_worker_id: OID,
+        table_id: OID,
+        partition_id: OID,
+        key: Vec<u8>,
+    ) -> RS<usize> {
+        match self.send_partition_rpc(
+            target_worker_id,
+            PartitionRpcRequest::Delete {
+                table_id,
+                partition_id,
+                key,
+            },
+        )? {
+            PartitionRpcResponse::Delete(rows) => Ok(rows),
+            PartitionRpcResponse::Err(err) => Err(m_error!(EC::InternalErr, err)),
+            _ => Err(m_error!(EC::InternalErr, "unexpected delete rpc response")),
+        }
+    }
+
+    async fn remote_update(
+        &self,
+        target_worker_id: OID,
+        table_id: OID,
+        partition_id: OID,
+        key: Vec<u8>,
+        values: Vec<(AttrIndex, Vec<u8>)>,
+    ) -> RS<usize> {
+        match self.send_partition_rpc(
+            target_worker_id,
+            PartitionRpcRequest::Update {
+                table_id,
+                partition_id,
+                key,
+                values,
+            },
+        )? {
+            PartitionRpcResponse::Update(rows) => Ok(rows),
+            PartitionRpcResponse::Err(err) => Err(m_error!(EC::InternalErr, err)),
+            _ => Err(m_error!(EC::InternalErr, "unexpected update rpc response")),
+        }
+    }
+
     fn _begin_tx(&self) -> Arc<dyn TxMgr> {
         Arc::new(WorkerTxManager::new(self.snapshot_mgr.begin_tx()))
     }
 
     async fn _insert(
-        & self,
+        &self,
         desc: Arc<TableDesc>,
         tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
@@ -391,16 +737,35 @@ impl IoUringXContract {
     ) -> RS<()> {
         let key = build_key_tuple(keys, &desc)?;
         let value = build_value_tuple(values, &desc)?;
-        let contain_key =  self.storage.get(table_id, &key, tx_mgr.as_ref()).await?;
+        let target_partition = self
+            .partition_router
+            .route_exact_partition(table_id, desc.as_ref(), keys)
+            .await?;
+        if let Some(partition_id) = target_partition {
+            match self.resolve_partition_worker(partition_id).await? {
+                Some(worker_id) if self.worker_id != 0 && worker_id != self.worker_id => {
+                    return self
+                        .remote_insert(worker_id, table_id, partition_id, key, value)
+                        .await;
+                }
+                _ => {}
+            }
+        }
+        let contain_key = self
+            .storage
+            .get_on_partition(table_id, target_partition, &key, tx_mgr.as_ref())
+            .await?;
         if contain_key.is_some() {
             Err(m_error!(EC::ExistingSuchElement, "existing key"))
         } else {
-            self.storage.put(table_id, key, value, tx_mgr.as_ref()).await
+            self.storage
+                .put_on_partition(table_id, target_partition, key, value, tx_mgr.as_ref())
+                .await
         }
     }
 
     async fn _read_key(
-        & self,
+        &self,
         desc: Arc<TableDesc>,
         tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
@@ -409,15 +774,44 @@ impl IoUringXContract {
         _opt_read: &OptRead,
     ) -> RS<Option<Vec<DatBin>>> {
         let key = build_key_tuple(pred_key, &desc)?;
-        let opt_value = self.storage.get(table_id, &key, tx_mgr.as_ref()).await?;
+        let target_partition = self
+            .partition_router
+            .route_exact_partition(table_id, desc.as_ref(), pred_key)
+            .await?;
+        let opt_value = match target_partition {
+            Some(partition_id) => match self.resolve_partition_worker(partition_id).await? {
+                Some(worker_id) if self.worker_id != 0 && worker_id != self.worker_id => {
+                    self.remote_read_key(
+                        worker_id,
+                        table_id,
+                        partition_id,
+                        key.clone(),
+                        select.vec().to_vec(),
+                    )
+                    .await?
+                }
+                _ => self
+                    .storage
+                    .get_on_partition(table_id, Some(partition_id), &key, tx_mgr.as_ref())
+                    .await?
+                    .map(|value| project_selected_fields(&desc, &key, &value, select))
+                    .transpose()?,
+            },
+            None => self
+                .storage
+                .get_on_partition(table_id, None, &key, tx_mgr.as_ref())
+                .await?
+                .map(|value| project_selected_fields(&desc, &key, &value, select))
+                .transpose()?,
+        };
         match opt_value {
-            Some(value) => project_selected_fields(&desc, &key, &value, select).map(Some),
+            Some(value) => Ok(Some(value)),
             None => Ok(None),
         }
     }
 
     async fn _read_range(
-        & self,
+        &self,
         desc: Arc<TableDesc>,
         tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
@@ -429,13 +823,61 @@ impl IoUringXContract {
         ensure_supported_predicate(pred_non_key)?;
         let start = build_bound_key(pred_key.start(), &desc)?;
         let end = build_bound_key(pred_key.end(), &desc)?;
-        let rows = self.storage.range(table_id, (start, end), tx_mgr.as_ref()).await?;
-        let projected = rows
-            .into_iter()
-            .map(|(key, value)| {
-                project_selected_fields(&desc, &key, &value, select).map(TupleRow::new)
-            })
-            .collect::<RS<Vec<_>>>()?;
+        let target_partitions = self
+            .partition_router
+            .route_range_partitions(table_id, desc.as_ref(), pred_key.start(), pred_key.end())
+            .await?;
+        let mut projected = Vec::new();
+        match target_partitions {
+            Some(partitions) => {
+                for partition_id in partitions {
+                    match self.resolve_partition_worker(partition_id).await? {
+                        Some(worker_id) if self.worker_id != 0 && worker_id != self.worker_id => {
+                            let rows = self
+                                .remote_read_range(
+                                    worker_id,
+                                    table_id,
+                                    partition_id,
+                                    rpc_bound_from_key_bound(pred_key.start(), &desc)?,
+                                    rpc_bound_from_key_bound(pred_key.end(), &desc)?,
+                                    select.vec().to_vec(),
+                                )
+                                .await?;
+                            for row in rows {
+                                projected.push(TupleRow::new(row));
+                            }
+                        }
+                        _ => {
+                            let rows = self
+                                .storage
+                                .range_on_partition(
+                                    table_id,
+                                    Some(partition_id),
+                                    (start.clone(), end.clone()),
+                                    tx_mgr.as_ref(),
+                                )
+                                .await?;
+                            for (key, value) in rows {
+                                projected.push(TupleRow::new(project_selected_fields(
+                                    &desc, &key, &value, select,
+                                )?));
+                            }
+                        }
+                    }
+                }
+            }
+            None => {
+                let rows = self
+                    .storage
+                    .range(table_id, (start, end), tx_mgr.as_ref())
+                    .await?;
+                for (key, value) in rows {
+                    projected.push(TupleRow::new(project_selected_fields(
+                        &desc, &key, &value, select,
+                    )?));
+                }
+            }
+        }
         Ok(Arc::new(VecCursor {
             inner: Mutex::new(VecCursorInner {
                 rows: projected,
@@ -445,7 +887,7 @@ impl IoUringXContract {
     }
 
     async fn _delete(
-        & self,
+        &self,
         desc: Arc<TableDesc>,
         tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
@@ -455,12 +897,29 @@ impl IoUringXContract {
     ) -> RS<usize> {
         ensure_supported_predicate(pred_non_key)?;
         let key = build_key_tuple(pred_key, &desc)?;
-        let deleted = self.storage.remove(table_id, &key, tx_mgr.as_ref()).await?;
+        let target_partition = self
+            .partition_router
+            .route_exact_partition(table_id, desc.as_ref(), pred_key)
+            .await?;
+        if let Some(partition_id) = target_partition {
+            match self.resolve_partition_worker(partition_id).await? {
+                Some(worker_id) if self.worker_id != 0 && worker_id != self.worker_id => {
+                    return self
+                        .remote_delete(worker_id, table_id, partition_id, key)
+                        .await;
+                }
+                _ => {}
+            }
+        }
+        let deleted = self
+            .storage
+            .remove_on_partition(table_id, target_partition, &key, tx_mgr.as_ref())
+            .await?;
         Ok(usize::from(deleted.is_some()))
     }
 
     async fn _update(
-        & self,
+        &self,
         desc: Arc<TableDesc>,
         tx_mgr: Arc<dyn TxMgr>,
         table_id: OID,
@@ -471,13 +930,36 @@ impl IoUringXContract {
     ) -> RS<usize> {
         ensure_supported_predicate(pred_non_key)?;
         let key = build_key_tuple(pred_key, &desc)?;
-        let current = self.storage.get(table_id, &key, tx_mgr.as_ref()).await?;
+        let target_partition = self
+            .partition_router
+            .route_exact_partition(table_id, desc.as_ref(), pred_key)
+            .await?;
+        if let Some(partition_id) = target_partition {
+            match self.resolve_partition_worker(partition_id).await? {
+                Some(worker_id) if self.worker_id != 0 && worker_id != self.worker_id => {
+                    return self
+                        .remote_update(
+                            worker_id,
+                            table_id,
+                            partition_id,
+                            key,
+                            values.data().clone(),
+                        )
+                        .await;
+                }
+                _ => {}
+            }
+        }
+        let current = self
+            .storage
+            .get_on_partition(table_id, target_partition, &key, tx_mgr.as_ref())
+            .await?;
         let Some(current) = current else {
             return Ok(0);
         };
         let updated = apply_value_update(&current, values, &desc)?;
         self.storage
-            .put(table_id, key, updated, tx_mgr.as_ref())
+            .put_on_partition(table_id, target_partition, key, updated, tx_mgr.as_ref())
             .await
             .map(|()| 1)
     }
@@ -664,16 +1146,51 @@ fn build_tuple_for<const IS_KEY: bool>(
     if !ok {
         return Err(m_error!(EC::TupleErr));
     }
-    let values: Vec<_> = vec_data.into_iter().map(|(_, v)| v).collect();
     let tuple_desc = if IS_KEY {
         desc.key_desc()
     } else {
         desc.value_desc()
     };
-    if tuple_desc.field_count() != values.len() {
+    let values: Vec<_> = vec_data.into_iter().map(|(_, v)| v).collect();
+    if IS_KEY && tuple_desc.field_count() != values.len() {
         return Err(m_error!(EC::TupleErr));
     }
-    build_tuple(&values, tuple_desc)
+    if IS_KEY {
+        return build_tuple(&values, tuple_desc);
+    }
+
+    let value_len = tuple_desc.field_count();
+    let mut completed = vec![None; value_len];
+    for (attr, value) in data {
+        let field = desc.get_attr(*attr);
+        if field.primary_index().is_some() {
+            return Err(m_error!(EC::TupleErr));
+        }
+        let datum_index = field.datum_index() as usize;
+        if datum_index >= value_len || completed[datum_index].is_some() {
+            return Err(m_error!(EC::TupleErr));
+        }
+        completed[datum_index] = Some(value.clone());
+    }
+    for attr in desc.value_indices() {
+        let field = desc.get_attr(*attr);
+        let datum_index = field.datum_index() as usize;
+        if completed[datum_index].is_some() {
+            continue;
+        }
+        let default = field
+            .type_desc()
+            .dat_type_id()
+            .fn_default()(field.type_desc())
+            .map_err(|e| e.to_m_err())?;
+        completed[datum_index] =
+            Some(send_binary(&default, field.type_desc()).map_err(|e| e.to_m_err())?);
+    }
+    let completed = completed
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| m_error!(EC::TupleErr))?;
+    build_tuple(&completed, tuple_desc)
 }
 
 fn build_bound_key(
@@ -690,6 +1207,31 @@ fn build_bound_key(
             Ok(Bound::Excluded(Box::leak(tuple.into_boxed_slice())))
         }
         Bound::Unbounded => Ok(Bound::Unbounded),
+    }
+}
+
+fn rpc_bound_from_key_bound(
+    bound: &Bound<Vec<(AttrIndex, DatBin)>>,
+    desc: &TableDesc,
+) -> RS<RpcBound> {
+    match bound {
+        Bound::Included(values) => Ok(RpcBound::Included(build_key_tuple(
+            &VecDatum::new(values.clone()),
+            desc,
+        )?)),
+        Bound::Excluded(values) => Ok(RpcBound::Excluded(build_key_tuple(
+            &VecDatum::new(values.clone()),
+            desc,
+        )?)),
+        Bound::Unbounded => Ok(RpcBound::Unbounded),
+    }
+}
+
+fn rpc_bound_as_ref(bound: &RpcBound) -> Bound<&[u8]> {
+    match bound {
+        RpcBound::Included(bytes) => Bound::Included(bytes.as_slice()),
+        RpcBound::Excluded(bytes) => Bound::Excluded(bytes.as_slice()),
+        RpcBound::Unbounded => Bound::Unbounded,
     }
 }
 
@@ -748,6 +1290,7 @@ fn single_put_batch(xid: u64, key: Vec<u8>, value: Vec<u8>) -> XLBatch {
                 crate::wal::xl_entry::TxOp::Begin,
                 crate::wal::xl_entry::TxOp::Insert(crate::wal::xl_data_op::XLInsert {
                     table_id: 0,
+                    partition_id: 0,
                     tuple_id: 0,
                     key,
                     value,
@@ -766,6 +1309,7 @@ fn single_delete_batch(xid: u64, key: Vec<u8>) -> XLBatch {
                 crate::wal::xl_entry::TxOp::Begin,
                 crate::wal::xl_entry::TxOp::Delete(crate::wal::xl_data_op::XLDelete {
                     table_id: 0,
+                    partition_id: 0,
                     tuple_id: 0,
                     key,
                 }),
@@ -786,6 +1330,7 @@ mod tests {
     use futures::executor::block_on;
     use mudu::common::id::gen_oid;
     use mudu_type::dat_type_id::DatTypeID;
+    use mudu_type::dt_fn_param::DatType;
     use mudu_type::dt_info::DTInfo;
     use std::collections::HashMap;
     use std::env::temp_dir;
@@ -865,6 +1410,62 @@ mod tests {
 
     fn value_row(v: i32) -> VecDatum {
         VecDatum::new(vec![(1, datum(v))])
+    }
+
+    fn datum_string(v: &str) -> Vec<u8> {
+        mudu_type::dt_function::send_binary(
+            &mudu_type::dat_value::DatValue::from_string(v.to_string()),
+            &mudu_type::dat_type::DatType::default_for(mudu_type::dat_type_id::DatTypeID::String),
+        )
+        .unwrap()
+    }
+
+    fn wallet_users_schema() -> SchemaTable {
+        use crate::contract::schema_column::SchemaColumn;
+        use mudu_type::dt_info::DTInfo;
+
+        SchemaTable::new(
+            "users".to_string(),
+            vec![
+                SchemaColumn::new(
+                    "user_id".to_string(),
+                    DatTypeID::I32,
+                    DTInfo::from_opt_object(&DatType::default_for(DatTypeID::I32)),
+                ),
+                SchemaColumn::new(
+                    "name".to_string(),
+                    DatTypeID::String,
+                    DTInfo::from_opt_object(&DatType::default_for(DatTypeID::String)),
+                ),
+                SchemaColumn::new(
+                    "phone".to_string(),
+                    DatTypeID::String,
+                    DTInfo::from_opt_object(&DatType::default_for(DatTypeID::String)),
+                ),
+                SchemaColumn::new(
+                    "email".to_string(),
+                    DatTypeID::String,
+                    DTInfo::from_opt_object(&DatType::default_for(DatTypeID::String)),
+                ),
+                SchemaColumn::new(
+                    "password".to_string(),
+                    DatTypeID::String,
+                    DTInfo::from_opt_object(&DatType::default_for(DatTypeID::String)),
+                ),
+                SchemaColumn::new(
+                    "created_at".to_string(),
+                    DatTypeID::I32,
+                    DTInfo::from_opt_object(&DatType::default_for(DatTypeID::I32)),
+                ),
+                SchemaColumn::new(
+                    "updated_at".to_string(),
+                    DatTypeID::I32,
+                    DTInfo::from_opt_object(&DatType::default_for(DatTypeID::I32)),
+                ),
+            ],
+            vec![0],
+            vec![1, 2, 3, 4, 5, 6],
+        )
     }
 
     #[test]
@@ -961,12 +1562,14 @@ mod tests {
                     TxOp::Begin,
                     TxOp::Insert(XLInsert {
                         table_id: 0,
+                        partition_id: 0,
                         tuple_id: 0,
                         key: b"wk".to_vec(),
                         value: b"wv".to_vec(),
                     }),
                     TxOp::Insert(XLInsert {
                         table_id,
+                        partition_id: 0,
                         tuple_id: 0,
                         key: build_key_tuple(&key_row(3), &meta_table(&schema).unwrap()).unwrap(),
                         value: build_value_tuple(&value_row(30), &meta_table(&schema).unwrap())
@@ -994,6 +1597,21 @@ mod tests {
     }
 
     #[test]
+    fn build_value_tuple_supports_partial_insert_with_mixed_types() {
+        let schema = wallet_users_schema();
+        let desc = meta_table(&schema).unwrap();
+        let input = VecDatum::new(vec![
+            (1, datum_string("Alice")),
+            (2, datum_string("12345678")),
+            (3, datum_string("alice@xxx.com")),
+            (4, datum_string("aaa")),
+            (5, datum(0)),
+        ]);
+        let tuple = build_value_tuple(&input, &desc).unwrap();
+        assert!(!tuple.is_empty());
+    }
+
+    #[test]
     fn iouring_xcontract_replay_applies_worker_kv_delete() {
         let contract = IoUringXContract::with_worker_log(
             ChunkedWorkerLogBackend::new(
@@ -1015,6 +1633,7 @@ mod tests {
                     TxOp::Begin,
                     TxOp::Delete(crate::wal::xl_data_op::XLDelete {
                         table_id: 0,
+                        partition_id: 0,
                         tuple_id: 0,
                         key: b"wk".to_vec(),
                     }),
