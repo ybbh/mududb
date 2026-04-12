@@ -116,6 +116,10 @@ impl WorkerRegistry {
             .get(&partition_id)
             .copied()
     }
+
+    pub fn default_global_worker_id(&self) -> Option<OID> {
+        self.worker(0).map(|worker| worker.worker_id)
+    }
 }
 
 fn scan_worker_identities(log_dir: &Path) -> RS<Vec<WorkerIdentity>> {

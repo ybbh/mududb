@@ -8,16 +8,14 @@ use mudu_contract::tuple::tuple_field_desc::TupleFieldDesc;
 use sql_parser::ast::stmt_type::StmtType;
 use std::sync::Arc;
 
-pub struct Describer {
-
-}
+pub struct Describer {}
 
 impl Describer {
     pub fn new() -> Self {
-        Self {  }
+        Self {}
     }
 
-    pub async fn describe(meta_mgr:&dyn MetaMgr, stmt: StmtType) -> RS<TupleFieldDesc> {
+    pub async fn describe(meta_mgr: &dyn MetaMgr, stmt: StmtType) -> RS<TupleFieldDesc> {
         match stmt {
             StmtType::Select(stmt) => Self::describe_select(meta_mgr, stmt).await,
             StmtType::Command(_) => Ok(TupleFieldDesc::new(Vec::new())),
@@ -25,7 +23,7 @@ impl Describer {
     }
 
     async fn describe_select(
-        meta_mgr:&dyn MetaMgr,
+        meta_mgr: &dyn MetaMgr,
         stmt: sql_parser::ast::stmt_select::StmtSelect,
     ) -> RS<TupleFieldDesc> {
         let table_desc = Self::get_table_by_name(meta_mgr, stmt.get_table_reference()).await?;
@@ -53,7 +51,7 @@ impl Describer {
             .ok_or_else(|| m_error!(ER::NoSuchElement, format!("cannot find column {}", name)))
     }
 
-    async fn get_table_by_name(meta_mgr:&dyn MetaMgr, name: &String) -> RS<Arc<TableDesc>> {
+    async fn get_table_by_name(meta_mgr: &dyn MetaMgr, name: &String) -> RS<Arc<TableDesc>> {
         meta_mgr
             .get_table_by_name(name)
             .await?

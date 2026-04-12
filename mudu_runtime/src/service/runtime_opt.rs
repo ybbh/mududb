@@ -1,3 +1,4 @@
+use crate::backend::mududb_cfg::ServerMode;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq, Default)]
@@ -13,6 +14,7 @@ pub struct RuntimeOpt {
     #[serde(default)]
     pub component_target: ComponentTarget,
     pub enable_async: bool,
+    pub sever_mode: ServerMode,
 }
 
 impl RuntimeOpt {
@@ -26,6 +28,7 @@ impl Default for RuntimeOpt {
         Self {
             component_target: ComponentTarget::P2,
             enable_async: false,
+            sever_mode: Default::default(),
         }
     }
 }

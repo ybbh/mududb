@@ -9,6 +9,10 @@ pub struct XLInsert {
     /// Recovery uses this to locate which table should receive the inserted
     /// tuple.
     pub table_id: OID,
+    /// Physical partition identifier for relation rows.
+    ///
+    /// `0` is reserved for worker-local KV WAL records.
+    pub partition_id: OID,
     /// Tuple identifier assigned to the inserted row version.
     ///
     /// This is the logical tuple id within the target table, not a physical
@@ -30,6 +34,10 @@ pub struct XLInsert {
 pub struct XLDelete {
     /// Target table object identifier.
     pub table_id: OID,
+    /// Physical partition identifier for relation rows.
+    ///
+    /// `0` is reserved for worker-local KV WAL records.
+    pub partition_id: OID,
     /// Tuple identifier of the row version being deleted.
     pub tuple_id: u64,
     /// Key bytes of the tuple to delete.
@@ -44,6 +52,8 @@ pub struct XLDelete {
 pub struct XLUpdate {
     /// Target table object identifier.
     pub table_id: OID,
+    /// Physical partition identifier for relation rows.
+    pub partition_id: OID,
     /// Tuple identifier of the row version being updated.
     pub tuple_id: u64,
     /// Key bytes of the tuple to update.

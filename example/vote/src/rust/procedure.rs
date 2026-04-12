@@ -297,3 +297,68 @@ pub fn get_voting_history(xid: XID, user_id: String) -> RS<Vec<VoteHistoryItem>>
 
     Ok(history)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::create_vote;
+
+    #[test]
+    fn create_vote_rejects_past_deadline() {
+        let err = create_vote(
+            1,
+            "creator".to_string(),
+            "topic".to_string(),
+            "single".to_string(),
+            1,
+            0,
+            "always".to_string(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("End time must be in future"));
+    }
+
+    #[test]
+    fn create_vote_rejects_invalid_vote_type_and_single_choice_mismatch() {
+        let future = mudu_sys::time::utc_now().timestamp() + 3600;
+
+        let vote_type_err = create_vote(
+            1,
+            "creator".to_string(),
+            "topic".to_string(),
+            "ranked".to_string(),
+            1,
+            future,
+            "always".to_string(),
+        )
+        .unwrap_err();
+        assert!(vote_type_err.to_string().contains("Vote type must be 'single' or 'multiple'"));
+
+        let single_err = create_vote(
+            1,
+            "creator".to_string(),
+            "topic".to_string(),
+            "single".to_string(),
+            2,
+            future,
+            "always".to_string(),
+        )
+        .unwrap_err();
+        assert!(single_err.to_string().contains("Single vote requires max_choices=1"));
+    }
+
+    #[test]
+    fn create_vote_rejects_invalid_visibility_rule() {
+        let future = mudu_sys::time::utc_now().timestamp() + 3600;
+        let err = create_vote(
+            1,
+            "creator".to_string(),
+            "topic".to_string(),
+            "multiple".to_string(),
+            3,
+            future,
+            "hidden".to_string(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("Visibility rule must be 'always' or 'after_end'"));
+    }
+}

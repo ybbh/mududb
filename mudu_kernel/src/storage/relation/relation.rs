@@ -1,6 +1,6 @@
-use std::ops::Bound;
-use std::cell::{Cell, UnsafeCell};
 use futures::executor::block_on;
+use std::cell::{Cell, UnsafeCell};
+use std::ops::Bound;
 
 use mudu::common::id::{TupleID, OID};
 use mudu::common::result::RS;
@@ -58,11 +58,19 @@ impl Relation {
         Ok(self.inner.visible_meta_sync(key, snapshot)?.is_some())
     }
 
-    pub async fn visible_value(&self, key: &KeyTuple, snapshot: &WorkerSnapshot) -> RS<Option<Vec<u8>>> {
+    pub async fn visible_value(
+        &self,
+        key: &KeyTuple,
+        snapshot: &WorkerSnapshot,
+    ) -> RS<Option<Vec<u8>>> {
         self.inner.visible_value(key, snapshot).await
     }
 
-    pub fn visible_value_sync(&self, key: &KeyTuple, snapshot: &WorkerSnapshot) -> RS<Option<Vec<u8>>> {
+    pub fn visible_value_sync(
+        &self,
+        key: &KeyTuple,
+        snapshot: &WorkerSnapshot,
+    ) -> RS<Option<Vec<u8>>> {
         self.inner.visible_value_sync(key, snapshot)
     }
 
@@ -194,7 +202,8 @@ impl RelationInner {
             let _ = self.index_mut().insert(key_tuple, row)?;
         }
 
-        self.next_tuple_id.set(max_tuple_id.saturating_add(1).max(1));
+        self.next_tuple_id
+            .set(max_tuple_id.saturating_add(1).max(1));
         Ok(())
     }
 
@@ -226,7 +235,11 @@ impl RelationInner {
         block_on(self.visible_meta(key, snapshot))
     }
 
-    async fn visible_value(&self, key: &KeyTuple, snapshot: &WorkerSnapshot) -> RS<Option<Vec<u8>>> {
+    async fn visible_value(
+        &self,
+        key: &KeyTuple,
+        snapshot: &WorkerSnapshot,
+    ) -> RS<Option<Vec<u8>>> {
         let Some((tuple_id, version)) = self.visible_meta(key, snapshot).await? else {
             return Ok(None);
         };

@@ -6,11 +6,9 @@ pub mod mududb_cfg;
 mod session;
 mod session_ctx;
 mod session_handle_task;
-mod test_backend;
-mod test_pg_cli;
-mod test_sql;
 #[cfg(all(test, target_os = "linux"))]
 mod sql_async_client_test;
+mod test_backend;
 pub mod web_handle_task;
 pub mod web_serve;
 

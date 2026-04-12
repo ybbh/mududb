@@ -13,7 +13,7 @@ mod callback_registry;
 #[cfg(target_os = "linux")]
 mod connection_worker_task;
 mod frame_dispatch;
-pub mod fsm;
+pub mod connection_state;
 mod handlers;
 #[cfg(target_os = "linux")]
 mod inflight_op;
@@ -21,7 +21,12 @@ mod inflight_op;
 mod loop_mailbox;
 #[cfg(target_os = "linux")]
 mod loop_user_io;
+pub mod message_bus_api;
+#[cfg(target_os = "linux")]
+mod message_bus_runtime;
 mod message_dispatcher;
+pub mod partition_router;
+mod partition_rpc;
 #[cfg(all(test, target_os = "linux"))]
 mod perf_test;
 #[cfg(target_os = "linux")]

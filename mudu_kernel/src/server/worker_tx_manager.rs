@@ -2,15 +2,14 @@ use crate::server::worker_snapshot::WorkerSnapshot;
 use crate::wal::xl_batch::XLBatch;
 use crate::wal::xl_data_op::{XLDelete, XLInsert};
 use crate::wal::xl_entry::{TxOp, XLEntry};
-use crate::x_engine::tx_mgr::TxMgr;
-use mudu::common::id::OID;
+use crate::x_engine::tx_mgr::{PhysicalRelationId, TxMgr};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 struct WorkerTxState {
     staged_puts: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
-    staged_relation_ops: BTreeMap<OID, BTreeMap<Vec<u8>, Option<Vec<u8>>>>,
-    write_ops: Vec<(OID, Vec<u8>)>,
+    staged_relation_ops: BTreeMap<PhysicalRelationId, BTreeMap<Vec<u8>, Option<Vec<u8>>>>,
+    write_ops: Vec<(PhysicalRelationId, Vec<u8>)>,
     log_buffer: Vec<TxOp>,
 }
 
@@ -47,6 +46,7 @@ impl TxMgr for WorkerTxManager {
         state.staged_puts.insert(key.clone(), Some(value.clone()));
         state.log_buffer.push(TxOp::Insert(XLInsert {
             table_id: 0,
+            partition_id: 0,
             tuple_id: 0,
             key,
             value,
@@ -58,6 +58,7 @@ impl TxMgr for WorkerTxManager {
         state.staged_puts.insert(key.clone(), None);
         state.log_buffer.push(TxOp::Delete(XLDelete {
             table_id: 0,
+            partition_id: 0,
             tuple_id: 0,
             key,
         }));
@@ -68,53 +69,55 @@ impl TxMgr for WorkerTxManager {
         state.staged_puts.get(key).cloned()
     }
 
-    fn put_relation(&self, oid: OID, key: Vec<u8>, value: Vec<u8>) {
+    fn put_relation(&self, relation_id: PhysicalRelationId, key: Vec<u8>, value: Vec<u8>) {
         let mut state = self.state.lock().unwrap();
         state
             .staged_relation_ops
-            .entry(oid)
+            .entry(relation_id)
             .or_default()
             .insert(key.clone(), Some(value.clone()));
         state.log_buffer.push(TxOp::Insert(XLInsert {
-            table_id: oid,
+            table_id: relation_id.table_id,
+            partition_id: relation_id.partition_id,
             tuple_id: 0,
             key,
             value,
         }));
     }
 
-    fn delete_relation(&self, oid: OID, key: Vec<u8>) {
+    fn delete_relation(&self, relation_id: PhysicalRelationId, key: Vec<u8>) {
         let mut state = self.state.lock().unwrap();
         state
             .staged_relation_ops
-            .entry(oid)
+            .entry(relation_id)
             .or_default()
             .insert(key.clone(), None);
         state.log_buffer.push(TxOp::Delete(XLDelete {
-            table_id: oid,
+            table_id: relation_id.table_id,
+            partition_id: relation_id.partition_id,
             tuple_id: 0,
             key,
         }));
     }
 
-    fn get_relation(&self, oid: OID, key: &[u8]) -> Option<Option<Vec<u8>>> {
+    fn get_relation(&self, relation_id: PhysicalRelationId, key: &[u8]) -> Option<Option<Vec<u8>>> {
         let state = self.state.lock().unwrap();
         state
             .staged_relation_ops
-            .get(&oid)
+            .get(&relation_id)
             .and_then(|rows| rows.get(key).cloned())
     }
 
     fn staged_relation_items_in_range(
         &self,
-        oid: OID,
+        relation_id: PhysicalRelationId,
         start_key: &[u8],
         end_key: &[u8],
     ) -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
         let state = self.state.lock().unwrap();
         state
             .staged_relation_ops
-            .get(&oid)
+            .get(&relation_id)
             .map(|rows| {
                 rows.iter()
                     .filter(|(key, _)| is_key_in_range(key, start_key, end_key))
@@ -124,7 +127,9 @@ impl TxMgr for WorkerTxManager {
             .unwrap_or_default()
     }
 
-    fn staged_relation_ops(&self) -> BTreeMap<OID, BTreeMap<Vec<u8>, Option<Vec<u8>>>> {
+    fn staged_relation_ops(
+        &self,
+    ) -> BTreeMap<PhysicalRelationId, BTreeMap<Vec<u8>, Option<Vec<u8>>>> {
         let state = self.state.lock().unwrap();
         state.staged_relation_ops.clone()
     }
@@ -153,7 +158,7 @@ impl TxMgr for WorkerTxManager {
         state.staged_puts.is_empty() && state.staged_relation_ops.is_empty()
     }
 
-    fn write_ops(&self) -> Vec<(OID, Vec<u8>)> {
+    fn write_ops(&self) -> Vec<(PhysicalRelationId, Vec<u8>)> {
         let state = self.state.lock().unwrap();
         state.write_ops.clone()
     }
@@ -163,11 +168,17 @@ impl TxMgr for WorkerTxManager {
         state.write_ops.clear();
         let mut write_ops = Vec::new();
         for key in state.staged_puts.keys() {
-            write_ops.push((0, key.clone()));
+            write_ops.push((
+                PhysicalRelationId {
+                    table_id: 0,
+                    partition_id: 0,
+                },
+                key.clone(),
+            ));
         }
-        for (oid, ops) in &state.staged_relation_ops {
+        for (relation_id, ops) in &state.staged_relation_ops {
             for key in ops.keys() {
-                write_ops.push((*oid, key.clone()));
+                write_ops.push((*relation_id, key.clone()));
             }
         }
         state.write_ops = write_ops;

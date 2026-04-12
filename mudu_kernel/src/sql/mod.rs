@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-mod cmp_pred;
 mod copy_layout;
 #[cfg(test)]
 mod copy_layout_test;
@@ -22,11 +21,7 @@ mod binder_test;
 pub mod stmt_cmd;
 mod stmt_create_table;
 
-mod build_select;
-mod build_where_predicate;
-
 mod current_tx;
-mod plan_param;
 mod stmt_copy_from;
 mod stmt_copy_to;
 

@@ -140,6 +140,7 @@ impl RuntimeSimple {
             modules,
             self.rt_opt.component_target(),
             self.rt_opt.enable_async,
+            self.rt_opt.sever_mode,
         )
         .await?;
         let mpk_name = app_instance.name().clone();

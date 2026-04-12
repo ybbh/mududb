@@ -79,7 +79,6 @@ impl Operator {
     }
 }
 
-
 impl ValueCompare {
     pub fn revert_cmp_op(op: ValueCompare) -> ValueCompare {
         match op {

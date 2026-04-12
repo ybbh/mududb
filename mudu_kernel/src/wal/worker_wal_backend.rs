@@ -1073,6 +1073,7 @@ mod tests {
                     TxOp::Begin,
                     TxOp::Insert(XLInsert {
                         table_id: 0,
+                        partition_id: 0,
                         tuple_id: 0,
                         key: b"k1".to_vec(),
                         value: b"v1".to_vec(),
@@ -1122,6 +1123,7 @@ mod tests {
                     TxOp::Begin,
                     TxOp::Insert(XLInsert {
                         table_id: 0,
+                        partition_id: 0,
                         tuple_id: 0,
                         key: b"k2".to_vec(),
                         value: b"v2".to_vec(),
@@ -1203,6 +1205,7 @@ mod tests {
                     TxOp::Begin,
                     TxOp::Insert(XLInsert {
                         table_id: 0,
+                        partition_id: 0,
                         tuple_id: 0,
                         key: b"k".to_vec(),
                         value: vec![9u8; 512],

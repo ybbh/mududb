@@ -1003,7 +1003,7 @@ mod tests {
         assert_eq!(sock.fd(), 41);
 
         let connect_task =
-            tokio::spawn(async move { connect(&sock, "127.0.0.1:9000".parse().unwrap()).await });
+            tokio::spawn(async move { connect(&sock, "127.0.0.1:9527".parse().unwrap()).await });
         yield_now().await;
         match ring.take_pending().unwrap().unwrap().1 {
             WorkerRingOp::Socket(SocketIoRequest::Connect(request)) => {

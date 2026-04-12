@@ -11,12 +11,19 @@ use crate::server::loop_mailbox::{
 use crate::server::loop_user_io::{
     handle_completion as handle_user_io_completion, submit as submit_user_io, LoopUserIoCtx,
 };
+use crate::server::message_bus_api::{
+    register_worker_message_bus, set_current_message_bus, unregister_worker_message_bus,
+    unset_current_message_bus,
+};
+use crate::server::message_bus_runtime::WorkerMessageBus;
 use crate::server::server_iouring;
 use crate::server::server_iouring::RecoveryCoordinator;
-use crate::server::session_bound_worker_runtime::{as_worker_local_ref, new_session_bound_worker_runtime};
+use crate::server::session_bound_worker_runtime::{
+    as_worker_local_ref, new_session_bound_worker_runtime,
+};
 use crate::server::worker::IoUringWorker;
-use crate::server::worker_loop_stats::WorkerLoopStats;
 use crate::server::worker_local::{set_current_worker_local, unset_current_worker_local};
+use crate::server::worker_loop_stats::WorkerLoopStats;
 use crate::server::worker_mailbox::WorkerMailboxMsg;
 use crate::server::worker_task::{spawn_system_worker_task, WorkerTaskFuture};
 use crate::wal::worker_log::ChunkedWorkerLogBackend;
@@ -60,6 +67,7 @@ pub(in crate::server) struct WorkerRingLoop {
     conn_id_alloc: Arc<AtomicU64>,
     recovery_coordinator: Arc<RecoveryCoordinator>,
     worker_local_ring: Arc<WorkerLocalRing>,
+    message_bus: Arc<WorkerMessageBus>,
     connection_task_fds: Arc<scc::HashMap<u64, RawFd>>,
     #[allow(dead_code)]
     callback_registry: CallbackRegistry,
@@ -106,6 +114,14 @@ impl WorkerRingLoop {
                 },
             )
         });
+        let worker_local_ring = Arc::new(WorkerLocalRing::new());
+        let message_bus = WorkerMessageBus::new(
+            worker.worker_id(),
+            worker.registry().clone(),
+            mailbox_fds.clone(),
+            mailboxes.clone(),
+            worker_local_ring.clone(),
+        );
         Ok(Self {
             log,
             worker,
@@ -117,7 +133,8 @@ impl WorkerRingLoop {
             mailbox_fds,
             conn_id_alloc,
             recovery_coordinator,
-            worker_local_ring: Arc::new(WorkerLocalRing::new()),
+            worker_local_ring,
+            message_bus,
             connection_task_fds: Arc::new(scc::HashMap::new()),
             callback_registry: CallbackRegistry::new(),
             callback_sequence_frontiers: HashMap::new(),
@@ -145,7 +162,12 @@ impl WorkerRingLoop {
             0,
         )));
         set_current_worker_ring(self.worker_local_ring.clone());
+        set_current_message_bus(self.message_bus.as_ref());
+        register_worker_message_bus(self.worker.worker_id(), &self.message_bus.as_ref())?;
+        self.worker.ensure_partition_rpc_handler()?;
         if let Err(err) = self.recover_worker_log() {
+            let _ = unregister_worker_message_bus(self.worker.worker_id());
+            unset_current_message_bus();
             unset_current_worker_ring();
             unset_current_worker_local();
             self.recovery_coordinator.worker_failed();
@@ -153,6 +175,8 @@ impl WorkerRingLoop {
         }
         self.recovery_coordinator.worker_succeeded()?;
         let r = self.run_service_loop();
+        let _ = unregister_worker_message_bus(self.worker.worker_id());
+        unset_current_message_bus();
         unset_current_worker_ring();
         unset_current_worker_local();
         r
@@ -199,7 +223,7 @@ impl WorkerRingLoop {
                                     crate::server::routing::ConnectionTransfer::new(
                                         conn_id,
                                         target_worker,
-                                        crate::server::fsm::ConnectionState::Accepted,
+                                        crate::server::connection_state::ConnectionState::Accepted,
                                         remote_addr,
                                     ),
                                     conn_fd,
@@ -256,6 +280,9 @@ impl WorkerRingLoop {
                     connection.transfer().remote_addr(),
                     initial_response,
                 )?;
+            }
+            WorkerMailboxMsg::BusMessage(envelope) => {
+                self.message_bus.handle_incoming(envelope)?;
             }
             WorkerMailboxMsg::Shutdown => {
                 self.shutdown_triggered.store(true, Ordering::Relaxed);

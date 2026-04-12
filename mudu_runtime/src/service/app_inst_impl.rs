@@ -1,3 +1,4 @@
+use crate::backend::mududb_cfg::ServerMode;
 use crate::db_connector::DBConnector;
 use crate::procedure::procedure::Procedure;
 use crate::resolver::schema_mgr::SchemaMgr;
@@ -31,6 +32,7 @@ pub struct AppInstImpl {
 struct AppInstImplInner {
     package_cfg: AppInfo,
     enable_async: bool,
+    server_mode: ServerMode,
     db_path: String,
     schema_mgr: SchemaMgr,
     modules: HashMap<String, PackageModule>,
@@ -45,6 +47,7 @@ impl AppInstImpl {
         vec_modules: Vec<(String, PackageModule)>,
         component_target: ComponentTarget,
         enable_async: bool,
+        server_mode: ServerMode,
     ) -> RS<Self> {
         Ok(Self {
             inner: Arc::new(
@@ -54,6 +57,7 @@ impl AppInstImpl {
                     vec_modules,
                     component_target,
                     enable_async,
+                    server_mode,
                 )
                 .await?,
             ),
@@ -92,6 +96,7 @@ impl AppInstImplInner {
         vec_modules: Vec<(String, PackageModule)>,
         component_target: ComponentTarget,
         enable_async: bool,
+        server_mode: ServerMode,
     ) -> RS<Self> {
         let modules = HashMap::new();
         let app_cfg = &package.package_cfg;
@@ -103,10 +108,19 @@ impl AppInstImplInner {
         }
         SchemaMgr::add_mgr(app_cfg.name.clone(), schema_mgr.clone());
         let sql_text = ddl_sql.to_string() + init_sql.as_str();
-        initdb(db_path, &app_cfg.name, &sql_text, &schema_mgr, enable_async).await?;
+        initdb(
+            db_path,
+            &app_cfg.name,
+            &sql_text,
+            &schema_mgr,
+            enable_async,
+            server_mode,
+        )
+        .await?;
         Ok(Self {
             package_cfg: app_cfg.clone(),
             enable_async,
+            server_mode,
             db_path: db_path.clone(),
             schema_mgr,
             modules,
@@ -202,7 +216,13 @@ impl AppInstImplInner {
     }
 
     pub async fn create_conn(&self, task_id: u128) -> RS<()> {
-        let db_conn = new_conn(&self.db_path, &self.package_cfg.name, self.enable_async).await?;
+        let db_conn = new_conn(
+            &self.db_path,
+            &self.package_cfg.name,
+            self.enable_async,
+            self.server_mode,
+        )
+        .await?;
         self._conn.insert_sync(task_id, db_conn).map_err(|_e| {
             m_error!(
                 EC::ExistingSuchElement,
@@ -259,8 +279,15 @@ impl AppInstImplInner {
     }
 }
 
-async fn new_conn(db_path: &String, app_name: &String, enable_async: bool) -> RS<DBConn> {
-    let db_type = if enable_async {
+async fn new_conn(
+    db_path: &String,
+    app_name: &String,
+    enable_async: bool,
+    server_mode: ServerMode,
+) -> RS<DBConn> {
+    let db_type = if server_mode == ServerMode::IOUring {
+        "MuduDB".to_string()
+    } else if enable_async {
         "LibSQLAsync".to_string()
     } else {
         "LibSQL".to_string()
@@ -276,14 +303,18 @@ async fn initdb(
     sql: &String,
     schema_mgr: &SchemaMgr,
     enable_async: bool,
+    server_mode: ServerMode,
 ) -> RS<()> {
     let init_db_lock = PathBuf::from(&db_path).join(format!("{}.lock", app_name));
-    if init_db_lock.exists()
-        && is_schema_initialized(db_path, app_name, schema_mgr, enable_async).await?
-    {
-        return Ok(());
+    if init_db_lock.exists() {
+        if server_mode == ServerMode::IOUring {
+            return Ok(());
+        }
+        if is_schema_initialized(db_path, app_name, schema_mgr, enable_async, server_mode).await? {
+            return Ok(());
+        }
     }
-    let conn = new_conn(db_path, app_name, enable_async).await?;
+    let conn = new_conn(db_path, app_name, enable_async, server_mode).await?;
     conn.execute_silent(sql.clone()).await?;
     File::create(&init_db_lock).map_err(|e| {
         m_error!(
@@ -300,8 +331,9 @@ async fn is_schema_initialized(
     app_name: &String,
     schema_mgr: &SchemaMgr,
     enable_async: bool,
+    server_mode: ServerMode,
 ) -> RS<bool> {
-    let conn = new_conn(db_path, app_name, enable_async).await?;
+    let conn = new_conn(db_path, app_name, enable_async, server_mode).await?;
     for table_name in schema_mgr.table_names() {
         let verify_sql = format!("SELECT 1 FROM {} LIMIT 1;", table_name);
         if conn.execute_silent(verify_sql).await.is_err() {

@@ -22,6 +22,7 @@ pub async fn async_serve(
     let runtime_opt = RuntimeOpt {
         component_target,
         enable_async,
+        sever_mode: cfg.server_mode,
     };
     let service = create_runtime_service(
         &cfg.mpk_path,

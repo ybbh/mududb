@@ -1,5 +1,5 @@
-use crate::mudu_conn::mudu_conn_core::MuduConnCore;
 use crate::contract::meta_mgr::MetaMgr;
+use crate::mudu_conn::mudu_conn_core::MuduConnCore;
 use crate::server::async_func_runtime::AsyncFuncInvokerPtr;
 use crate::server::routing::{
     route_worker, RoutingContext, RoutingMode, SessionOpenConfig, SessionOpenTransferAction,
@@ -7,7 +7,10 @@ use crate::server::routing::{
 use crate::server::session_bound_worker_runtime::{
     as_worker_local_ref, new_session_bound_worker_runtime,
 };
-use crate::server::worker_local::{WorkerExecute, WorkerLocalRef};
+use crate::server::worker_local::{
+    WorkerExecute, WorkerLocalRef, set_current_worker_local, try_current_worker_local,
+    unset_current_worker_local,
+};
 use crate::server::worker_registry::{WorkerIdentity, WorkerRegistry};
 use crate::server::worker_session_manager::{SessionContext, WorkerSessionManager};
 use crate::server::worker_snapshot::KvItem;
@@ -99,6 +102,10 @@ impl IoUringWorker {
             )
         })?;
         let worker_id = identity.worker_id;
+        let default_unpartitioned_worker_id =
+            registry.default_global_worker_id().ok_or_else(|| {
+                m_error!(EC::ParseErr, "worker registry has no default global worker")
+            })?;
         let log_layout =
             WorkerLogLayout::new(log_dir, worker_id, log_chunk_size)?.with_batching(log_batching);
         let log = ChunkedWorkerLogBackend::new_with_active_sessions(
@@ -107,6 +114,8 @@ impl IoUringWorker {
         )?;
         let contract = Arc::new(IoUringXContract::with_worker_log_and_data_dir(
             log,
+            worker_id,
+            default_unpartitioned_worker_id,
             partition_id,
             data_dir,
         ));
@@ -269,15 +278,14 @@ impl IoUringWorker {
     }
 
     fn put_in_session(&self, session_id: OID, key: Vec<u8>, value: Vec<u8>) -> RS<()> {
-        self.session_manager.with_session_tx(session_id, |tx_manager| {
-            match tx_manager {
+        self.session_manager
+            .with_session_tx(session_id, |tx_manager| match tx_manager {
                 Some(tx_manager) => {
                     tx_manager.put(key, value);
                     Ok(())
                 }
                 None => self.contract.worker_put(key, value),
-            }
-        })
+            })
     }
 
     pub(crate) async fn put_in_session_async(
@@ -365,7 +373,11 @@ impl IoUringWorker {
                     )
                     .await?
             }
-            None => self.contract.worker_range_scan_async(start_key, end_key).await?,
+            None => {
+                self.contract
+                    .worker_range_scan_async(start_key, end_key)
+                    .await?
+            }
         };
         for item in base_items {
             merged.insert(item.key, Some(item.value));
@@ -393,6 +405,8 @@ impl IoUringWorker {
         self.ensure_session_owned_by_connection(conn_id, session_id)?;
         let worker_local =
             as_worker_local_ref(new_session_bound_worker_runtime(self.clone(), session_id));
+        let prev_worker_local = try_current_worker_local();
+        set_current_worker_local(worker_local.clone());
         let result = self
             .invoke_procedure(
                 session_id,
@@ -400,8 +414,13 @@ impl IoUringWorker {
                 request.procedure_parameters_owned(),
                 worker_local,
             )
-            .await?;
-        Ok(ProcedureInvokeResponse::new(result))
+            .await;
+        if let Some(prev_worker_local) = prev_worker_local {
+            set_current_worker_local(prev_worker_local);
+        } else {
+            unset_current_worker_local();
+        }
+        Ok(ProcedureInvokeResponse::new(result?))
     }
 
     pub fn worker_index(&self) -> usize {
@@ -430,6 +449,10 @@ impl IoUringWorker {
 
     pub fn worker_log(&self) -> Option<ChunkedWorkerLogBackend> {
         self.contract.worker_log()
+    }
+
+    pub(crate) fn ensure_partition_rpc_handler(&self) -> RS<()> {
+        self.contract.ensure_partition_rpc_handler()
     }
 
     pub fn x_contract(&self) -> Arc<dyn XContract> {
@@ -474,7 +497,8 @@ impl IoUringWorker {
         tx_mgr: Arc<dyn TxMgr>,
     ) -> RS<u64> {
         let stmt = core.parse_one(stmt.as_ref())?;
-        core.execute(stmt, param, tx_mgr, self.contract.clone()).await
+        core.execute(stmt, param, tx_mgr, self.contract.clone())
+            .await
     }
 
     pub(crate) async fn query(
@@ -987,6 +1011,7 @@ mod tests {
     async fn worker_storage_uses_worker_partition_id_for_relation_files() {
         let (log_dir, registry) = test_registry(1);
         let identity = registry.worker(0).cloned().unwrap();
+        let worker_id = identity.worker_id;
         let partition_id = identity.partition_ids[0];
         let _worker = IoUringWorker::new(
             identity,
@@ -1002,13 +1027,18 @@ mod tests {
         let contract = IoUringXContract::with_log_and_data_dir(
             Arc::new(TestMetaMgr::new()),
             None,
+            worker_id,
+            worker_id,
             partition_id,
             log_dir.clone(),
         );
         let schema = test_schema();
         let table_id = schema.id();
         let tx_mgr = contract.begin_tx().await.unwrap();
-        contract.create_table(tx_mgr.clone(), &schema).await.unwrap();
+        contract
+            .create_table(tx_mgr.clone(), &schema)
+            .await
+            .unwrap();
         contract.commit_tx(tx_mgr).await.unwrap();
 
         let key_path = TimeSeriesFile::relation_file_path(&log_dir, partition_id, table_id, 0);
@@ -1122,7 +1152,10 @@ mod tests {
             .prepare_connection_transfer(conn_id, Some(action))
             .unwrap();
         assert_eq!(transferred.len(), 2);
-        assert!(futures::executor::block_on(source.get_for_connection(conn_id, session_a, b"k")).is_err());
+        assert!(
+            futures::executor::block_on(source.get_for_connection(conn_id, session_a, b"k"))
+                .is_err()
+        );
 
         target
             .adopt_connection_sessions(conn_id, &transferred)
@@ -1137,7 +1170,8 @@ mod tests {
             .put_for_connection(conn_id, session_b, b"k".to_vec(), b"v".to_vec())
             .unwrap();
         assert_eq!(
-            futures::executor::block_on(target.get_for_connection(conn_id, session_b, b"k")).unwrap(),
+            futures::executor::block_on(target.get_for_connection(conn_id, session_b, b"k"))
+                .unwrap(),
             Some(b"v".to_vec())
         );
     }

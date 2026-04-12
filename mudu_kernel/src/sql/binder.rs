@@ -1,11 +1,16 @@
 use crate::contract::meta_mgr::MetaMgr;
+use crate::contract::partition_rule::{
+    PartitionBound, PartitionRuleDesc, RangePartitionDef,
+};
+use crate::contract::partition_rule_binding::{PartitionPlacement, TablePartitionBinding};
 use crate::contract::schema_column::SchemaColumn;
 use crate::contract::schema_table::SchemaTable;
 use crate::contract::table_desc::TableDesc;
 use crate::executor::project_tuple_desc;
 use crate::sql::bound_stmt::{
-    BoundCommand, BoundCopyFrom, BoundCopyTo, BoundCreateTable, BoundDelete, BoundDropTable,
-    BoundInsert, BoundPredicate, BoundQuery, BoundSelect, BoundStmt, BoundUpdate,
+    BoundCommand, BoundCopyFrom, BoundCopyTo, BoundCreatePartitionPlacement,
+    BoundCreatePartitionRule, BoundCreateTable, BoundDelete, BoundDropTable, BoundInsert,
+    BoundPredicate, BoundQuery, BoundSelect, BoundStmt, BoundUpdate,
 };
 use crate::sql::copy_layout::CopyLayout;
 use crate::sql::value_codec::ValueCodec;
@@ -17,6 +22,10 @@ use mudu_type::dt_info::DTInfo;
 use sql_parser::ast::expr_compare::ExprCompare;
 use sql_parser::ast::expr_item::{ExprItem, ExprValue};
 use sql_parser::ast::expr_operator::ValueCompare;
+use sql_parser::ast::stmt_create_partition_placement::StmtCreatePartitionPlacement;
+use sql_parser::ast::stmt_create_partition_rule::{
+    StmtCreatePartitionRule, StmtPartitionBound,
+};
 use sql_parser::ast::stmt_create_table::StmtCreateTable;
 use sql_parser::ast::stmt_delete::StmtDelete;
 use sql_parser::ast::stmt_drop_table::StmtDropTable;
@@ -48,6 +57,14 @@ impl Binder {
 
     async fn bind_command(&self, command: StmtCommand, params: &dyn SQLParams) -> RS<BoundCommand> {
         match command {
+            StmtCommand::CreatePartitionPlacement(stmt) => Ok(
+                BoundCommand::CreatePartitionPlacement(
+                    self.bind_create_partition_placement(stmt).await?,
+                ),
+            ),
+            StmtCommand::CreatePartitionRule(stmt) => Ok(BoundCommand::CreatePartitionRule(
+                self.bind_create_partition_rule(stmt)?,
+            )),
             StmtCommand::CreateTable(stmt) => {
                 Ok(BoundCommand::CreateTable(self.bind_create_table(stmt)?))
             }
@@ -110,14 +127,123 @@ impl Binder {
             .map(|index| index + value_offset)
             .collect();
         columns.append(&mut value_columns);
+        let schema = SchemaTable::new(stmt.table_name().clone(), columns, key_indices, value_indices);
+        let partition_binding = if let Some(partition) = stmt.partition() {
+            let rule = futures::executor::block_on(
+                self.meta_mgr.get_partition_rule_by_name(partition.rule_name()),
+            )?
+            .ok_or_else(|| {
+                m_error!(
+                    ER::NoSuchElement,
+                    format!("no such partition rule {}", partition.rule_name())
+                )
+            })?;
+            let ref_attr_indices = partition
+                .reference_columns()
+                .iter()
+                .map(|column| {
+                    schema
+                        .columns()
+                        .iter()
+                        .position(|field| field.get_name() == column)
+                        .ok_or_else(|| {
+                            m_error!(
+                                ER::NoSuchElement,
+                                format!("no such partition reference column {}", column)
+                            )
+                        })
+                })
+                .collect::<RS<Vec<_>>>()?;
+            if rule.partitions.is_empty() {
+                return Err(m_error!(
+                    ER::ParseErr,
+                    format!("partition rule {} has no partitions", partition.rule_name())
+                ));
+            }
+            Some(TablePartitionBinding {
+                table_id: schema.id(),
+                rule_id: rule.oid,
+                ref_attr_indices,
+            })
+        } else {
+            None
+        };
         Ok(BoundCreateTable {
-            schema: SchemaTable::new(
-                stmt.table_name().clone(),
-                columns,
-                key_indices,
-                value_indices,
-            ),
+            schema,
+            partition_binding,
         })
+    }
+
+    fn bind_create_partition_rule(
+        &self,
+        stmt: StmtCreatePartitionRule,
+    ) -> RS<BoundCreatePartitionRule> {
+        let partitions = stmt
+            .partitions()
+            .iter()
+            .map(|partition| {
+                Ok(RangePartitionDef::new(
+                    partition.name().to_string(),
+                    Self::bind_partition_bound(partition.start()),
+                    Self::bind_partition_bound(partition.end()),
+                ))
+            })
+            .collect::<RS<Vec<_>>>()?;
+        Ok(BoundCreatePartitionRule {
+            rule: PartitionRuleDesc::new_range(stmt.rule_name().to_string(), Vec::new(), partitions),
+        })
+    }
+
+    async fn bind_create_partition_placement(
+        &self,
+        stmt: StmtCreatePartitionPlacement,
+    ) -> RS<BoundCreatePartitionPlacement> {
+        let rule = self
+            .meta_mgr
+            .get_partition_rule_by_name(stmt.rule_name())
+            .await?
+            .ok_or_else(|| {
+                m_error!(
+                    ER::NoSuchElement,
+                    format!("no such partition rule {}", stmt.rule_name())
+                )
+            })?;
+        let mut placements = Vec::with_capacity(stmt.placements().len());
+        for placement in stmt.placements() {
+            let partition = rule
+                .partitions
+                .iter()
+                .find(|partition| partition.name == placement.partition_name())
+                .ok_or_else(|| {
+                    m_error!(
+                        ER::NoSuchElement,
+                        format!(
+                            "no such partition {} in rule {}",
+                            placement.partition_name(),
+                            stmt.rule_name()
+                        )
+                    )
+                })?;
+            let worker_id = placement.worker_id().parse::<u128>().map_err(|e| {
+                m_error!(
+                    ER::ParseErr,
+                    format!("invalid worker id {}", placement.worker_id()),
+                    e
+                )
+            })?;
+            placements.push(PartitionPlacement {
+                partition_id: partition.partition_id,
+                worker_id,
+            });
+        }
+        Ok(BoundCreatePartitionPlacement { placements })
+    }
+
+    fn bind_partition_bound(bound: &StmtPartitionBound) -> PartitionBound {
+        match bound {
+            StmtPartitionBound::Unbounded => PartitionBound::Unbounded,
+            StmtPartitionBound::Value(values) => PartitionBound::Value(values.clone()),
+        }
     }
 
     async fn bind_drop_table(&self, stmt: StmtDropTable) -> RS<BoundDropTable> {

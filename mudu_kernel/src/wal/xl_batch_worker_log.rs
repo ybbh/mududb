@@ -131,6 +131,7 @@ mod tests {
                     TxOp::Begin,
                     TxOp::Insert(XLInsert {
                         table_id: 7,
+                        partition_id: 0,
                         tuple_id: xid as u64 + 10,
                         key: format!("key-{xid}").into_bytes(),
                         value: vec![xid as u8; payload_size],

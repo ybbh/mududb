@@ -697,9 +697,13 @@ fn load_partition_routing_sync(partition_count: usize) -> RS<PartitionRouting> {
                 e
             )
         })?;
-    let topology = runtime
-        .block_on(fetch_server_topology(&http_addr))
-        .map_err(|e| mudu::m_error!(mudu::error::ec::EC::NetErr, e))?;
+    let topology = match runtime.block_on(fetch_server_topology(&http_addr)) {
+        Ok(topology) => topology,
+        Err(err) if topology_is_unsupported(&err) => {
+            return Ok(default_partition_routing(partition_count));
+        }
+        Err(err) => return Err(mudu::m_error!(mudu::error::ec::EC::NetErr, err)),
+    };
     build_partition_routing(partition_count, topology)
 }
 
@@ -707,10 +711,19 @@ async fn load_partition_routing_async(partition_count: usize) -> RS<PartitionRou
     let Some(http_addr) = mudu_adapter::config::mudud_http_addr() else {
         return Ok(default_partition_routing(partition_count));
     };
-    let topology = fetch_server_topology(&http_addr)
-        .await
-        .map_err(|e| mudu::m_error!(mudu::error::ec::EC::NetErr, e))?;
+    let topology = match fetch_server_topology(&http_addr).await {
+        Ok(topology) => topology,
+        Err(err) if topology_is_unsupported(&err) => {
+            return Ok(default_partition_routing(partition_count));
+        }
+        Err(err) => return Err(mudu::m_error!(mudu::error::ec::EC::NetErr, err)),
+    };
     build_partition_routing(partition_count, topology)
+}
+
+fn topology_is_unsupported(err: &str) -> bool {
+    err.contains("server topology is not supported")
+        || err.contains("\"code\":\"NotImplemented\"")
 }
 
 fn default_partition_routing(partition_count: usize) -> PartitionRouting {
