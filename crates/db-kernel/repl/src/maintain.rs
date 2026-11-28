@@ -104,6 +104,19 @@ pub async fn run_repl_maintenance(
             )
             .await;
         }
+        // Raft mode: take the same section the commit driver holds across its
+        // resume-read + floor-pin + segment-read, so the watermark computed
+        // here can never reclaim frames an in-flight read is about to consume
+        // (the `worker log ended before segment lsn` race). Stream mode has no
+        // read floor and does not need the section.
+        let service = match &driver {
+            MaintainDriver::Raft { .. } => crate::data_plane::data_plane_for(server_instance_id),
+            MaintainDriver::Stream { .. } => None,
+        };
+        let _gc_guard = match &service {
+            Some(service) => Some(service.wal_gc_lock().lock_owned().await),
+            None => None,
+        };
         let gc_point = gc_watermark(
             server_instance_id,
             worker_index,
@@ -113,6 +126,7 @@ pub async fn run_repl_maintenance(
         )
         .await?;
         gc_wal_prefix(server_instance_id, worker_index, &log, &layout, gc_point).await;
+        drop(_gc_guard);
     }
 }
 

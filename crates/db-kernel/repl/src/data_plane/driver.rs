@@ -18,6 +18,7 @@ use mudu::common::result::RS;
 use mudu::error::ErrorCode;
 use mudu::mudu_error;
 use std::sync::Arc;
+use std::time::Duration;
 use storage::prepared_commit::PreparedWorkerCommit;
 use wal::lsn::LSN;
 use wal::worker_log::{ChunkedWorkerLogBackend, WorkerLogBatching};
@@ -212,6 +213,10 @@ impl StreamCommitDriver {
         }
         // The resume point: this driver's own last committed tail, else the
         // data machine's applied WAL point (advanced by convergence).
+        // Serialize resume-read + pin + frame-read against the maintenance
+        // loop's watermark + reclaim: a GC round must not observe or advance
+        // the reclaim frontier while this segment's frames are being read.
+        let _gc_guard = self.service.wal_gc_lock().lock_owned().await;
         let cell = self.service.wal_resume(self.worker_index)?;
         let prev_lsn = match self.local_tail {
             Some(tail) if tail >= cell => tail,
@@ -222,6 +227,7 @@ impl StreamCommitDriver {
             }
         };
         if seg_hi < prev_lsn {
+            drop(_gc_guard);
             self.service.request_convergence();
             fail_staged(
                 staged,
@@ -244,11 +250,13 @@ impl StreamCommitDriver {
             }
             Err(err) => {
                 self.service.unpin_wal_read(self.worker_index);
+                drop(_gc_guard);
                 self.service.request_convergence();
                 fail_staged(staged, err);
                 return Ok(());
             }
         };
+        drop(_gc_guard);
         let segment = DataSegment { version: 1, frames };
         // The group commit can wait on the quorum gate for as long as a
         // follower lags; the driver's own stop must still cut it short so a
@@ -291,9 +299,23 @@ impl StreamCommitDriver {
     /// range) from the local WAL.
     async fn read_segment_frames(&mut self, prev_lsn: u64, seg_hi: u64) -> RS<Vec<Vec<u8>>> {
         let mut frames = Vec::new();
+        // A staged group-commit frame is visible to the allocator
+        // (`next_lsn`) as soon as it is enqueued, but reaches the chunk
+        // files only when the background flush driver drains the in-memory
+        // queue (`enqueue_group_commit` reserves file offsets at drain
+        // time). While the allocator still covers this segment the cursor's
+        // end-of-log is flush lag, not a reclaimed prefix: retry briefly
+        // and only declare a loss once the log was actually cut back.
+        let flush_lag_deadline = mudu_sys::time::instant_now() + Duration::from_secs(2);
         loop {
             let frame = self.cursor.next_frame().await?;
             let Some(frame) = frame else {
+                if self.log.next_lsn().as_u64() > seg_hi
+                    && mudu_sys::time::instant_now() < flush_lag_deadline
+                {
+                    mudu_sys::task::async_::sleep(Duration::from_millis(2)).await?;
+                    continue;
+                }
                 crate::note_gc_race_detected();
                 return Err(mudu_error!(
                     ErrorCode::InvalidState,

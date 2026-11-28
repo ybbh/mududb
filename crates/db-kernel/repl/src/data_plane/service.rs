@@ -75,6 +75,11 @@ pub struct DataPlaneService {
     /// In-flight worker WAL read floors (worker index -> lowest LSN the commit
     /// driver still needs). `gc_watermark` clamps to it.
     wal_read_floors: SMutex<BTreeMap<u32, u64>>,
+    /// Serializes the commit driver's (resume-read, pin, segment-read) against
+    /// the maintenance loop's (GC watermark, prefix reclaim): without a shared
+    /// section the GC can reclaim frames between the driver's resume read and
+    /// its floor pin, surfacing as `worker log ended before segment lsn`.
+    wal_gc_lock: Arc<mudu_sys::tokio::sync::Mutex<()>>,
     pub(super) tx_machine: Arc<TxDecisionMachine>,
     pub(super) coordinators:
         SMutex<BTreeMap<catalog::contract::tx_decision::CoordinatorRef, std::sync::Weak<()>>>,
@@ -222,6 +227,7 @@ impl DataPlaneService {
             serving: Arc::new(AtomicBool::new(false)),
             machines: SMutex::new(BTreeMap::new()),
             wal_read_floors: SMutex::new(BTreeMap::new()),
+            wal_gc_lock: Arc::new(mudu_sys::tokio::sync::Mutex::new(())),
             tx_machine,
             coordinators: SMutex::new(BTreeMap::new()),
             scheduler: SMutex::new(None),
@@ -334,6 +340,12 @@ impl DataPlaneService {
                 )
             })?
             .wal_resume()
+    }
+
+    /// The shared section serializing commit-driver WAL segment reads against
+    /// prefix GC (see the field comment).
+    pub fn wal_gc_lock(&self) -> Arc<mudu_sys::tokio::sync::Mutex<()>> {
+        self.wal_gc_lock.clone()
     }
 
     /// Pins the worker's WAL read floor so prefix GC cannot reclaim below
